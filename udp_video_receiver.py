@@ -10,12 +10,6 @@ HEADER_FMT = "<H I H H H I"
 HEADER_SIZE = struct.calcsize(HEADER_FMT)
 MAGIC_NUMBER = 0xABCD
 
-import socket
-import struct
-import cv2
-import numpy as np
-
-# ... (HEADER 定义同前) ...
 
 def start_receiver():
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
