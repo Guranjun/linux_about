@@ -52,7 +52,7 @@ void Udp_Init(Udp_Config *udp_config, const char *ip, uint16_t port)
     return 0;
 
 }
-void Udp_Send_Frame(Udp_Config *udp, uint8_t *jpg_data, uint32_t jpg_len) 
+/*void Udp_Send_Frame(Udp_Config *udp, uint8_t *jpg_data, uint32_t jpg_len) 
 {
     const int CHUNK_SIZE = 1400; // 避开以太网 MTU 限制
     uint16_t total_pkgs = (jpg_len + CHUNK_SIZE - 1) / CHUNK_SIZE;
@@ -73,7 +73,7 @@ void Udp_Send_Frame(Udp_Config *udp, uint8_t *jpg_data, uint32_t jpg_len)
         send_packet_optimized(udp->Sock, &hdr, jpg_data + (i * CHUNK_SIZE), &udp->dest_addr);
     }
     udp->current_frame_id++; 
-}
+}*/
 void* udp_send_thread(void *arg)
 {
     char* ip_address = (char *)arg;

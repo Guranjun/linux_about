@@ -3,16 +3,18 @@
 
 #include <pthread.h>
 #include <stdint.h>
+
+#define FRAME_HIGH 480
+#define FRAME_WIDTH 640
 /*udp发送线程与v4l2采集线程之间的共享数据区*/
 typedef struct{
     uint8_t *camera_data[2];
     uint32_t frame_len[2];
-    int write;
-    int read;
-    int New_Frame_flag;
+    int latest_index;//最新数据所在的索引
+    int is_sending;//是否正在发送数据
     pthread_mutex_t lock;
     pthread_cond_t  cond;
-}SharedBuffer;
+}Camera_Udp_SharedBuffer;
 /*udp数据包的数据帧头定义*/
 typedef struct{
 	uint16_t magic;		//帧头标志
