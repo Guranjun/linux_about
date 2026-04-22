@@ -3,7 +3,7 @@
 
 #include <pthread.h>
 #include <stdint.h>
-
+#include <time.h>
 #define FRAME_HIGH 480
 #define FRAME_WIDTH 640
 /*udp发送线程与v4l2采集线程之间的共享数据区*/
@@ -26,5 +26,5 @@ typedef struct{
 } __attribute__((packed)) Frame_Header;
 /*应用运行标志 running在main.c中定义  表示正在运行这个应用*/
 extern int running;
-extern char* ip_address;
+extern Camera_Udp_SharedBuffer camera_udp_shared_buffer;
 #endif
