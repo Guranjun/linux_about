@@ -71,6 +71,9 @@ void Udp_Send_Frame(Udp_Config *udp, uint8_t *jpg_data, uint32_t jpg_len)
     uint32_t ts = (uint32_t)time(NULL); 
 
     for (uint16_t i = 0; i < total_pkgs; i++) {
+        if(!running){
+            break; // 如果应用正在停止，提前退出循环
+        }
         uint16_t current_chunk = (jpg_len - i * CHUNK_SIZE > CHUNK_SIZE) ? 
                                  CHUNK_SIZE : (jpg_len - i * CHUNK_SIZE);
 
@@ -115,15 +118,12 @@ void* udp_send_thread(void *arg)
         uint8_t* data_to_send = camera_udp_shared_buffer.camera_data[index_to_send];
         pthread_mutex_unlock(&camera_udp_shared_buffer.lock);
         /*第三步*/
-        printf("UDP: Start sending frame %d\n", index_to_send);
-        printf("UDP: is_sending %d\n", camera_udp_shared_buffer.is_sending);
         Udp_Send_Frame(&udp, data_to_send, frame_len);
         /*第四步*/
         pthread_mutex_lock(&camera_udp_shared_buffer.lock);
         camera_udp_shared_buffer.is_sending = 0;
         pthread_cond_signal(&camera_udp_shared_buffer.cond);
         pthread_mutex_unlock(&camera_udp_shared_buffer.lock);
-        printf("UDP: End sending\n");
     }
     close(udp.Sock);
     return NULL;

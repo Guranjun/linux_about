@@ -121,7 +121,6 @@ void *camera_capture_thread(void *arg)
 		if(ioctl(cam.fd, VIDIOC_QBUF, &buf) < 0){
 			perror("QBUF failed");
 		}
-		printf("Capture: DQBUF success\n");
     }
 	enum v4l2_buf_type type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     ioctl(cam.fd, VIDIOC_STREAMOFF, &type);
