@@ -13,3 +13,6 @@
 *.ipr
 out/
 gen/
+
+### Tests ###
+.TestForOpenCV/
