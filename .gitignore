@@ -15,4 +15,7 @@ out/
 gen/
 
 ### Tests ###
-.TestForOpenCV/
+py_for_pc/TestForOpenCV/
+
+### yolo ###
+yolov8n.pt
