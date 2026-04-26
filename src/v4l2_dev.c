@@ -20,7 +20,7 @@ struct V4L2_Device {
 	int width;			//视频宽度
 	int height;			//视频高度
 };
-int V4l2_Init(const char *device_path, V4L2_Device *device)
+static int V4l2_Init(const char *device_path, V4L2_Device *device)
 {
 	device->fd = open(device_path, O_RDWR);
 	if(device->fd < 0){
@@ -106,11 +106,12 @@ void *camera_capture_thread(void *arg)
 		camera_udp_shared_buffer.frame_len[write_index] = buf.bytesused;
 		/*第二步逻辑实现*/
 		pthread_mutex_lock(&camera_udp_shared_buffer.lock);
-		if(!camera_udp_shared_buffer.is_sending){
+		if(camera_udp_shared_buffer.status == -1 || camera_udp_shared_buffer.status == 1){
 			// 没有正在发送数据，更新latest_index
 			camera_udp_shared_buffer.latest_index = write_index;
-			pthread_cond_signal(&camera_udp_shared_buffer.cond);
+			pthread_cond_broadcast(&camera_udp_shared_buffer.cond);
 			write_index = (write_index + 1) % 2; // 切换到另一个缓冲区
+			camera_udp_shared_buffer.status = 1; // 数据已经准备好，待处理，待发送
 		}
 		else{
 			// 正在发送数据，不更新latest_index

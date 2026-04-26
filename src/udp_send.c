@@ -22,7 +22,7 @@ struct Udp_Config {
 	struct sockaddr_in dest_addr;	//目的地址
 	uint32_t current_frame_id; // 帧ID计数器
 };
-void send_packet_optimized(int sock, Frame_Header *header, uint8_t *image_data, struct sockaddr_in *dest_addr) {
+static void send_packet_optimized(int sock, Frame_Header *header, uint8_t *image_data, struct sockaddr_in *dest_addr) {
     struct iovec iov[2];
     struct msghdr msg;
 
@@ -45,7 +45,7 @@ void send_packet_optimized(int sock, Frame_Header *header, uint8_t *image_data, 
         perror("sendmsg error");
     }
 }
-int Udp_Init(Udp_Config *udp_config, const char *ip, uint16_t port)
+static int Udp_Init(Udp_Config *udp_config, const char *ip, uint16_t port)
 {
 	udp_config->Sock = socket(AF_INET, SOCK_DGRAM, 0);
 	if (udp_config->Sock < 0) {
@@ -64,7 +64,7 @@ int Udp_Init(Udp_Config *udp_config, const char *ip, uint16_t port)
     return 0;
 
 }
-void Udp_Send_Frame(Udp_Config *udp, uint8_t *jpg_data, uint32_t jpg_len) 
+static void Udp_Send_Frame(Udp_Config *udp, uint8_t *jpg_data, uint32_t jpg_len) 
 {
     const int CHUNK_SIZE = 1400; // 避开以太网 MTU 限制
     uint16_t total_pkgs = (jpg_len + CHUNK_SIZE - 1) / CHUNK_SIZE;
@@ -107,11 +107,11 @@ void* udp_send_thread(void *arg)
         /*第一步*/
        
         pthread_mutex_lock(&camera_udp_shared_buffer.lock);
-        while((camera_udp_shared_buffer.latest_index == -1 || camera_udp_shared_buffer.is_sending == 1) && running){
+        while((camera_udp_shared_buffer.latest_index == -1 || camera_udp_shared_buffer.status != 3) && running){
             pthread_cond_wait(&camera_udp_shared_buffer.cond, &camera_udp_shared_buffer.lock);
         }
         /*第二步*/
-        camera_udp_shared_buffer.is_sending = 1;
+        camera_udp_shared_buffer.status = 4; // 数据正在发送
         int index_to_send = camera_udp_shared_buffer.latest_index;
         camera_udp_shared_buffer.latest_index = -1; // 重置为-1表示数据已被取走
         uint32_t frame_len = camera_udp_shared_buffer.frame_len[index_to_send];
@@ -121,7 +121,7 @@ void* udp_send_thread(void *arg)
         Udp_Send_Frame(&udp, data_to_send, frame_len);
         /*第四步*/
         pthread_mutex_lock(&camera_udp_shared_buffer.lock);
-        camera_udp_shared_buffer.is_sending = 0;
+        camera_udp_shared_buffer.status = -1;
         pthread_cond_signal(&camera_udp_shared_buffer.cond);
         pthread_mutex_unlock(&camera_udp_shared_buffer.lock);
     }

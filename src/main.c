@@ -8,6 +8,7 @@
 #include "common.h"
 #include "v4l2_dev.h"
 #include "udp_send.h"
+#include "image_process.hpp"
 int running = 1;
 Camera_Udp_SharedBuffer camera_udp_shared_buffer;
 
@@ -37,11 +38,13 @@ int main(int argc,char **argv)
     pthread_mutex_init(&camera_udp_shared_buffer.lock, NULL);
     pthread_cond_init(&camera_udp_shared_buffer.cond, NULL);
     /*线程相关的定义*/
-    pthread_t t_camera_capture, t_udp_send;
+    pthread_t t_camera_capture, t_udp_send,t_image_process;
     pthread_create(&t_camera_capture, NULL, camera_capture_thread, (void *)argv[1]);
     pthread_create(&t_udp_send, NULL, udp_send_thread, (void *)argv[2]);
+    pthread_create(&t_image_process, NULL, _thread, NULL);
     pthread_join(t_camera_capture, NULL);
     pthread_join(t_udp_send, NULL);
+    pthread_join(t_image_process, NULL);
     /*释放资源*/
     free(camera_udp_shared_buffer.camera_data[0]);
     free(camera_udp_shared_buffer.camera_data[1]);
