@@ -16,6 +16,8 @@ gen/
 
 ### Tests ###
 py_for_pc/TestForOpenCV/
-
+inc/OpenCV-MinGW-Build-OpenCV-4.5.5-x64/
+cpp/
+build/
 ### yolo ###
 yolov8n.pt
