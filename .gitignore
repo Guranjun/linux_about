@@ -19,5 +19,7 @@ py_for_pc/TestForOpenCV/
 inc/OpenCV-MinGW-Build-OpenCV-4.5.5-x64/
 cpp/
 build/
+py_for_pc/venv_yolo/
+bin/
 ### yolo ###
 yolov8n.pt

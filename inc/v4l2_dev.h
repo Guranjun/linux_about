@@ -4,7 +4,7 @@
 
 
 typedef struct V4L2_Device V4L2_Device;
-int V4l2_Init(const char *device_path, V4L2_Device *device);
+
 void *camera_capture_thread(void *arg);
 
 
