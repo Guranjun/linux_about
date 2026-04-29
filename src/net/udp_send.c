@@ -132,7 +132,10 @@ void* udp_send_thread(void *arg)
         udp_send_buffer.is_sending = false; //重置标志位，表示数据已经发送完毕
         pthread_mutex_unlock(&udp_send_buffer.lock);
     }
+    pthread_mutex_destroy(&udp_send_buffer.lock);
+    pthread_cond_destroy(&udp_send_buffer.cond);
     close(udp_send_buffer.Sock);
+
     return NULL;
 }
 void udp_msg_handler(Common_Msg_t* msg)
