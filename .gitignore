@@ -15,6 +15,7 @@ out/
 gen/
 
 ### Tests ###
+codex_versions/
 py_for_pc/TestForOpenCV/
 inc/OpenCV-MinGW-Build-OpenCV-4.5.5-x64/
 cpp/

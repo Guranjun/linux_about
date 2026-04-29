@@ -84,3 +84,29 @@ extern "C" void* process_image_thread(void* arg)
     }
     return nullptr;
 }
+
+void alarm_msg_release_handler(Common_Msg_t* msg)
+{
+    switch (msg->type) {
+        case MSG_TYPE_IMAGE:
+            // 释放图像数据资源
+            V4L2_msg_release_handler(msg);
+            break;
+        case MSG_TYPE_ALARM:
+            // 释放告警数据资源
+            break;
+        case MSG_TYPE_LOG:
+            // 释放日志数据资源
+            break;
+        case MSG_TYPE_COMMAND:
+            // 释放命令数据资源
+            break;
+        default:
+            break;
+    }
+}
+void alarm_msg_handler(Common_Msg_t* msg)
+{
+    //根据告警消息的数据结构处理告警逻辑
+    (void)msg;
+}
