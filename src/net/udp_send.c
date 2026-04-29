@@ -75,6 +75,13 @@ static int Udp_Init(UDP_Send_Buffer *udp_config, const char *ip, uint16_t port)
     pthread_cond_init(&udp_config->cond, NULL);
     return 0;
 }
+static void Udp_Release(void)
+{
+    free(udp_send_buffer.send_buf);
+    pthread_mutex_destroy(&udp_send_buffer.lock);
+    pthread_cond_destroy(&udp_send_buffer.cond);
+    close(udp_send_buffer.Sock);
+}
 static void Udp_Send_Frame(UDP_Send_Buffer *udp, uint8_t *send_data, uint32_t send_len) 
 {
     const int CHUNK_SIZE = 1400; // 避开以太网 MTU 限制
@@ -132,9 +139,7 @@ void* udp_send_thread(void *arg)
         udp_send_buffer.is_sending = false; //重置标志位，表示数据已经发送完毕
         pthread_mutex_unlock(&udp_send_buffer.lock);
     }
-    pthread_mutex_destroy(&udp_send_buffer.lock);
-    pthread_cond_destroy(&udp_send_buffer.cond);
-    close(udp_send_buffer.Sock);
+    Udp_Release();
 
     return NULL;
 }

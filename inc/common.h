@@ -7,6 +7,7 @@
 #include <pthread.h>
 #include <stdint.h>
 #include <time.h>
+#include "log.h"
 #define FRAME_HIGH 480
 #define FRAME_WIDTH 640
 #define V4L2_BUF_COUNT 2
