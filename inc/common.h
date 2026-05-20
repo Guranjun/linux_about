@@ -25,7 +25,20 @@ typedef enum {
     MODULE_ID_COMMAND,
     MODULE_ID_MAX
 } Module_ID_e;
-
+typedef enum {
+    IDLE = 0,
+    SEND,
+    RESEND,
+    DONE,
+    ERROR
+} STATUS;
+typedef enum {
+    NORMAL = 0,
+    IMAGE,
+    DB,
+    VIDEO,
+    COMMOND
+} FILE_TYPE;
 typedef enum {
     MSG_TYPE_IMAGE = 0,
     MSG_TYPE_ALARM,
@@ -63,7 +76,8 @@ typedef struct {
 typedef struct {
     void *data_ptr;
     uint32_t total_len;
-    Msg_Type_e msg_type;
+    FILE_TYPE type;
+    STATUS status;
     int fd;
 } BigData_Msg_t;
 
@@ -98,13 +112,6 @@ typedef struct {
     Alarm_Level status;
 } Alarm_Data;
 
-typedef struct {
-    Image_Data data[2];
-    int latest_index;
-    int status;
-    pthread_mutex_t lock;
-    pthread_cond_t cond;
-} Camera_Udp_SharedBuffer;
 
 typedef struct {
     uint16_t magic;		//帧头标志
@@ -112,6 +119,7 @@ typedef struct {
 	uint16_t pkg_cnt;	//分包总数
 	uint16_t pkg_id;	//分包ID
 	uint16_t data_len;	//数据长度
+    FILE_TYPE type;
 	uint64_t timestamp;	//时间戳
     
 } __attribute__((packed)) Frame_Header;
