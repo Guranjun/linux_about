@@ -103,6 +103,7 @@ static void Udp_Send_Frame(UDP_Send_Buffer *udp, uint8_t *send_data, uint32_t se
         hdr.magic = 0xABCD;
         hdr.frame_id = udp->current_frame_id;
         hdr.pkg_cnt = total_pkgs;
+        hdr.type = IMAGE;
         hdr.pkg_id = i;
         hdr.data_len = current_chunk;
         hdr.timestamp = ts;

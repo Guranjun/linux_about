@@ -16,20 +16,27 @@
 #include "my_time.h"
 #include "tcp_send.h"
 #include "msg_about.h"
+
 #define TCP_SEND_PORT 8080
 #define TCP_CHUNK_SIZE 1400U
 #define TCP_SEND_BUFFER_INIT_SIZE (256U * 1024U)
-
+typedef enum{
+    TCP_DATA_NORMAL = 0,
+    TCP_DATA_BIG
+} TCP_DATA_TYPE;
 typedef struct {
     int Sock;
     struct sockaddr_in dest_addr;
     uint32_t current_frame_id;
     bool connected;
     bool is_sending;
-    uint8_t *big_data_addr;
+    FILE_TYPE type;
+    TCP_DATA_TYPE data_type;
     uint8_t *send_buf;
     uint32_t send_buf_len;
     uint32_t send_buf_capacity;
+    BigData_Msg_t* p_bigdata_msg;
+    Module_ID_e src_module;
     Log_Msg_t log_msg;
     pthread_mutex_t lock;
     pthread_cond_t cond;
@@ -76,17 +83,19 @@ static int Tcp_Init(Tcp_Data_Buffer *tcp_config, const char *ip, uint16_t port)
 {
     memset(tcp_config, 0, sizeof(*tcp_config));
     memset(&tcp_config->log_msg, 0, sizeof(tcp_config->log_msg));
-
+    tcp_config->p_bigdata_msg = NULL;
     tcp_config->Sock = -1;
     tcp_config->dest_addr.sin_family = AF_INET;
     tcp_config->dest_addr.sin_port = htons(port);
     tcp_config->dest_addr.sin_addr.s_addr = inet_addr(ip);
     tcp_config->current_frame_id = 0;
+    tcp_config->data_type = TCP_DATA_NORMAL;
+    tcp_config->type = NORMAL;
+    tcp_config->src_module = MODULE_ID_MAX;
     tcp_config->is_sending = false;
     tcp_config->send_buf_capacity = TCP_SEND_BUFFER_INIT_SIZE;
     tcp_config->send_buf = (uint8_t *)malloc(tcp_config->send_buf_capacity);
     tcp_config->send_buf_len = 0;
-    tcp_config->big_data_addr = NULL;
     if (tcp_config->send_buf == NULL) {
         perror("tcp send buffer malloc");
         return -1;
@@ -116,27 +125,16 @@ static void Tcp_Deinit(void)
 
 static int Tcp_Ensure_Send_Buffer(Tcp_Data_Buffer *tcp_config, uint32_t required_len)
 {
-    uint8_t *new_buf;
-    uint32_t new_capacity;
 
     if (required_len <= tcp_config->send_buf_capacity) {
         return 0;
     }
-
-    new_capacity = tcp_config->send_buf_capacity;
-    while (new_capacity < required_len) {
-        new_capacity *= 2U;
-    }
-
-    new_buf = (uint8_t *)realloc(tcp_config->send_buf, new_capacity);
-    if (new_buf == NULL) {
-        perror("tcp send buffer realloc");
-        return -1;
-    }
-
-    tcp_config->send_buf = new_buf;
-    tcp_config->send_buf_capacity = new_capacity;
-    return 0;
+    fprintf(stderr,
+            "tcp send buffer overflow: required=%u, capacity=%u, use BIGDATA zero-copy path instead\n",
+            required_len,
+            tcp_config->send_buf_capacity);
+    return -1;
+    
 }
 
 static int Tcp_Send_All(int sock, const uint8_t *buf, size_t len)
@@ -178,7 +176,7 @@ static int Tcp_Send_Packet(int sock, const Frame_Header *header, const uint8_t *
     return Tcp_Send_All(sock, data, header->data_len);
 }
 
-static int Tcp_Send_Frame(Tcp_Data_Buffer *tcp, const uint8_t *send_data, uint32_t send_len)
+static int Tcp_Send_Frame(Tcp_Data_Buffer *tcp, const uint8_t *send_data, uint32_t send_len, FILE_TYPE type)
 {
     uint16_t total_pkgs;
     uint64_t ts;
@@ -205,18 +203,16 @@ static int Tcp_Send_Frame(Tcp_Data_Buffer *tcp, const uint8_t *send_data, uint32
         hdr.frame_id = tcp->current_frame_id;
         hdr.pkg_cnt = total_pkgs;
         hdr.pkg_id = i;
+        hdr.type = type;
         hdr.data_len = current_chunk;
         hdr.timestamp = ts;
 
         if (Tcp_Send_Packet(tcp->Sock, &hdr, send_data + offset) != 0) {
-            perror("tcp send");
-            tcp->connected = false;
-            Tcp_Close_Socket(tcp);
             return -1;
         }
     }
 
-    ++tcp->current_frame_id;
+    //++tcp->current_frame_id;
     return 0;
 }
 
@@ -231,7 +227,9 @@ void *tcp_send_thread(void *arg)
     while (running) {
         uint32_t frame_len;
         uint8_t *data_to_send;
-
+        FILE_TYPE current_file_type;
+        TCP_DATA_TYPE current_data_type;
+        Module_ID_e target_module = MODULE_ID_MAX;
         pthread_mutex_lock(&tcp_data_buffer.lock);
         while ((!tcp_data_buffer.is_sending) && running) {
             pthread_cond_wait(&tcp_data_buffer.cond, &tcp_data_buffer.lock);
@@ -240,20 +238,42 @@ void *tcp_send_thread(void *arg)
             pthread_mutex_unlock(&tcp_data_buffer.lock);
             break;
         }
-
-        frame_len = tcp_data_buffer.send_buf_len;
-        data_to_send = tcp_data_buffer.send_buf;
+        current_data_type = tcp_data_buffer.data_type;
+        current_file_type = tcp_data_buffer.type;
+        target_module = tcp_data_buffer.src_module;
+        if(current_data_type == TCP_DATA_NORMAL){
+            frame_len = tcp_data_buffer.send_buf_len;
+            data_to_send = tcp_data_buffer.send_buf;
+        }
+        else{
+            frame_len = tcp_data_buffer.p_bigdata_msg->total_len;
+            data_to_send = tcp_data_buffer.p_bigdata_msg->data_ptr;
+        }
         pthread_mutex_unlock(&tcp_data_buffer.lock);
 
         if (!tcp_data_buffer.connected) {
             Tcp_Open_And_Connect(&tcp_data_buffer);
         }
-
+        bool send_success = false;
         if (tcp_data_buffer.connected) {
-            Tcp_Send_Frame(&tcp_data_buffer, data_to_send, frame_len);
+            if (Tcp_Send_Frame(&tcp_data_buffer, data_to_send, frame_len, current_file_type) == 0) {
+                send_success = true;
+            }
         }
 
         pthread_mutex_lock(&tcp_data_buffer.lock);
+        if (send_success) {
+            tcp_data_buffer.current_frame_id++;
+        }
+        if (current_data_type == TCP_DATA_BIG) {
+            tcp_data_buffer.p_bigdata_msg->status = send_success ? DONE : ERROR;
+            msg_dispatch(MODULE_ID_TCP, 
+                         target_module, 
+                         tcp_data_buffer.p_bigdata_msg->total_len, 
+                         MSG_TYPE_BIGDATA, 
+                         tcp_data_buffer.p_bigdata_msg);
+            tcp_data_buffer.p_bigdata_msg = NULL;
+        }
         tcp_data_buffer.is_sending = false;
         pthread_mutex_unlock(&tcp_data_buffer.lock);
     }
@@ -275,8 +295,10 @@ void tcp_msg_handler(Common_Msg_t *msg)
             pthread_mutex_lock(&tcp_data_buffer.lock);
             if (!tcp_data_buffer.is_sending) {
                 if (Tcp_Ensure_Send_Buffer(&tcp_data_buffer, img_data->len) == 0) {
+                    tcp_data_buffer.data_type = TCP_DATA_NORMAL;
                     tcp_data_buffer.send_buf_len = img_data->len;
                     memcpy(tcp_data_buffer.send_buf, img_data->data, img_data->len);
+                    tcp_data_buffer.type = NORMAL;
                     tcp_data_buffer.is_sending = true;
                     pthread_cond_signal(&tcp_data_buffer.cond);
                 }
@@ -287,8 +309,31 @@ void tcp_msg_handler(Common_Msg_t *msg)
         case MSG_TYPE_ALARM:
         case MSG_TYPE_LOG:
         case MSG_TYPE_COMMAND:
+            break;
         case MSG_TYPE_BIGDATA:{
             //这里是大数据文件发送相关操作
+            BigData_Msg_t* big_msg = (BigData_Msg_t*)msg->data;
+            if(big_msg == NULL || big_msg->data_ptr == NULL || big_msg->total_len == 0U){
+                break;
+            }
+            pthread_mutex_lock(&tcp_data_buffer.lock);
+            if(!tcp_data_buffer.is_sending) {
+                tcp_data_buffer.data_type = TCP_DATA_BIG;
+                tcp_data_buffer.p_bigdata_msg = big_msg;
+                tcp_data_buffer.is_sending = true;
+                tcp_data_buffer.src_module = msg->src_module;
+                tcp_data_buffer.type = big_msg->type;
+                pthread_cond_signal(&tcp_data_buffer.cond);
+                //msg->src_module = MODULE_ID_TCP;
+                pthread_mutex_unlock(&tcp_data_buffer.lock);
+            }
+            else {
+                //申请重发
+                //memset(&tcp_config->bigdata_msg, 0, sizeof(tcp_config->bigdata_msg));
+                pthread_mutex_unlock(&tcp_data_buffer.lock);
+                big_msg->status = RESEND;
+                msg_dispatch(MODULE_ID_TCP, msg->src_module, big_msg->total_len, MSG_TYPE_BIGDATA, big_msg);
+            }
             
             break;
         }

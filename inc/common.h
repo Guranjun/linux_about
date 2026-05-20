@@ -119,7 +119,7 @@ typedef struct {
 	uint16_t pkg_cnt;	//分包总数
 	uint16_t pkg_id;	//分包ID
 	uint16_t data_len;	//数据长度
-    FILE_TYPE type;
+    FILE_TYPE type;     //数据类型
 	uint64_t timestamp;	//时间戳
     
 } __attribute__((packed)) Frame_Header;
