@@ -30,7 +30,7 @@ typedef enum {
     SEND,
     RESEND,
     DONE,
-    ERROR
+    FILE_DELIVER_ERROR
 } STATUS;
 typedef enum {
     NORMAL = 0,
@@ -88,7 +88,7 @@ typedef enum {
     DEBUG = 0,
     INFO,
     WARN,
-    ERROR
+    LOG_ERROR
 } LOG_LEVEL;
 
 typedef struct {
@@ -125,7 +125,7 @@ typedef struct {
 } __attribute__((packed)) Frame_Header;
 
 extern int running;
-extern Camera_Udp_SharedBuffer camera_udp_shared_buffer;
+
 
 void msg_init(void);
 Common_Msg_t msg_make(Module_ID_e src, Module_ID_e dst, uint32_t len, Msg_Type_e type, void *data);
