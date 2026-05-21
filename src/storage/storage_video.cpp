@@ -211,7 +211,7 @@ void storage_msg_handler(Common_Msg_t* msg)
                 if(storage_data.data_ready){
                     storage_data.write_idx = 0;
                     //写个日志
-                    log_make(&storage_data.log_msg, ERROR, gettime_us(), MODULE_ID_STORAGE, "Failed");
+                    log_make(&storage_data.log_msg, LOG_ERROR, gettime_us(), MODULE_ID_STORAGE, "Failed");
                     msg_dispatch(MODULE_ID_STORAGE, MODULE_ID_LOGGER, sizeof(storage_data.log_msg), MSG_TYPE_LOG, &storage_data.log_msg);
                 }
                 else{

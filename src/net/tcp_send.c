@@ -11,7 +11,7 @@
 #include <sys/types.h>
 #include <sys/uio.h>
 #include <unistd.h>
-
+#include <fcntl.h>
 #include "common.h"
 #include "my_time.h"
 #include "tcp_send.h"
@@ -66,16 +66,46 @@ static int Tcp_Open_And_Connect(Tcp_Data_Buffer *tcp_config)
     }
 
     setsockopt(tcp_config->Sock, SOL_SOCKET, SO_SNDBUF, &send_buf_size, sizeof(send_buf_size));
+    //设为非阻塞连接，因为阻塞连接阻塞时间过长
+    int flags = fcntl(tcp_config->Sock, F_GETFL, 0);
+    if (flags < 0 || fcntl(tcp_config->Sock, F_SETFL, flags | O_NONBLOCK) < 0) {
+        Tcp_Close_Socket(tcp_config);
+        return -1;
+    }
+    //尝试连接
+    int ret = connect(tcp_config->Sock, (struct sockaddr *)&tcp_config->dest_addr, sizeof(tcp_config->dest_addr));
+    if (ret < 0) {
+        if (errno == EINPROGRESS) {
+            // 用 select 设置 50ms 超时
+            struct timeval tv = {0, 50000}; // 50ms
+            fd_set wfd;
+            FD_ZERO(&wfd);
+            FD_SET(tcp_config->Sock, &wfd);
 
-    if (connect(tcp_config->Sock,
-                (struct sockaddr *)&tcp_config->dest_addr,
-                sizeof(tcp_config->dest_addr)) < 0) {
-        perror("tcp connect");
+            ret = select(tcp_config->Sock + 1, NULL, &wfd, NULL, &tv);
+            if (ret <= 0 || !running) {
+                Tcp_Close_Socket(tcp_config);
+                return -1;
+            }
+
+            // 二次确认网络通路
+            int err = 0;
+            socklen_t len = sizeof(err);
+            if (getsockopt(tcp_config->Sock, SOL_SOCKET, SO_ERROR, &err, &len) < 0 || err != 0) {
+                Tcp_Close_Socket(tcp_config);
+                return -1;
+            }
+        } else {
+            Tcp_Close_Socket(tcp_config);
+            return -1;
+        }
+    }
+    //切换为阻塞连接发送
+    if (fcntl(tcp_config->Sock, F_SETFL, flags) < 0) {
         Tcp_Close_Socket(tcp_config);
         return -1;
     }
 
-    tcp_config->connected = true;
     return 0;
 }
 
@@ -230,6 +260,7 @@ void *tcp_send_thread(void *arg)
         FILE_TYPE current_file_type;
         TCP_DATA_TYPE current_data_type;
         Module_ID_e target_module = MODULE_ID_MAX;
+
         pthread_mutex_lock(&tcp_data_buffer.lock);
         while ((!tcp_data_buffer.is_sending) && running) {
             pthread_cond_wait(&tcp_data_buffer.cond, &tcp_data_buffer.lock);
@@ -241,6 +272,7 @@ void *tcp_send_thread(void *arg)
         current_data_type = tcp_data_buffer.data_type;
         current_file_type = tcp_data_buffer.type;
         target_module = tcp_data_buffer.src_module;
+
         if(current_data_type == TCP_DATA_NORMAL){
             frame_len = tcp_data_buffer.send_buf_len;
             data_to_send = tcp_data_buffer.send_buf;
@@ -249,24 +281,42 @@ void *tcp_send_thread(void *arg)
             frame_len = tcp_data_buffer.p_bigdata_msg->total_len;
             data_to_send = tcp_data_buffer.p_bigdata_msg->data_ptr;
         }
+        bool is_conn = tcp_data_buffer.connected; // 锁内读取当前状态
         pthread_mutex_unlock(&tcp_data_buffer.lock);
 
-        if (!tcp_data_buffer.connected) {
-            Tcp_Open_And_Connect(&tcp_data_buffer);
-        }
         bool send_success = false;
-        if (tcp_data_buffer.connected) {
-            if (Tcp_Send_Frame(&tcp_data_buffer, data_to_send, frame_len, current_file_type) == 0) {
-                send_success = true;
+
+        if (!is_conn) {
+            if (Tcp_Open_And_Connect(&tcp_data_buffer) == 0) {
+                pthread_mutex_lock(&tcp_data_buffer.lock);
+                tcp_data_buffer.connected = true;
+                pthread_mutex_unlock(&tcp_data_buffer.lock);
+                is_conn = true; // 标记本次可以尝试发送
             }
         }
-
+        if (is_conn) {
+            if (Tcp_Send_Frame(&tcp_data_buffer, data_to_send, frame_len, current_file_type) == 0) {
+                send_success = true;
+            } else {
+                printf("Send file type %d failed, disconnected\n", current_data_type);
+                pthread_mutex_lock(&tcp_data_buffer.lock);
+                tcp_data_buffer.connected = false; // 锁内安全标记断线
+                pthread_mutex_unlock(&tcp_data_buffer.lock);
+                send_success = false;
+            }
+        } 
+        else {
+            //连接失败
+            send_success = false;
+        }
+        
         pthread_mutex_lock(&tcp_data_buffer.lock);
         if (send_success) {
             tcp_data_buffer.current_frame_id++;
         }
         if (current_data_type == TCP_DATA_BIG) {
-            tcp_data_buffer.p_bigdata_msg->status = send_success ? DONE : ERROR;
+            tcp_data_buffer.p_bigdata_msg->status = send_success ? DONE : FILE_DELIVER_ERROR;
+            //建议这个操作在锁外执行，引入一个新的指针变量，保存这个p_bigdata_msg的指针值
             msg_dispatch(MODULE_ID_TCP, 
                          target_module, 
                          tcp_data_buffer.p_bigdata_msg->total_len, 
