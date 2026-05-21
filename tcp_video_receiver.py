@@ -4,153 +4,131 @@ import time
 import cv2
 import numpy as np
 
-# --- 配置 ---
+# ================= 配置参数 =================
 TCP_IP = "0.0.0.0"
 TCP_PORT = 8080
 
-# --- 根据新结构体更新格式字符串 ---
-# H=uint16_t(2B), I=uint32_t(4B), Q=uint64_t(8B)
-# 对应: magic, frame_id, pkg_cnt, pkg_id, data_len, type, timestamp
-HEADER_FMT = "<H I H H H I Q"
-HEADER_SIZE = struct.calcsize(HEADER_FMT)
-MAGIC_NUMBER = 0xABCD
-
-# 定义与C语言一致的枚举映射
-FILE_TYPE = {
-    0: "NORMAL",
-    1: "IMAGE",
-    2: "DB",
-    3: "VIDEO",
-    4: "COMMOND"
-}
-
-
-def recv_exact(sock, size):
-    """从 TCP 流中精确读取 size 字节，连接关闭时返回 None。"""
-    chunks = bytearray()
-    while len(chunks) < size:
-        packet = sock.recv(size - len(chunks))
-        if not packet:
-            return None
-        chunks.extend(packet)
-    return bytes(chunks)
-
-
-def draw_fps(img, fps):
-    fps_text = f"FPS: {int(fps)}"
-    h, w = img.shape[:2]
-    cv2.putText(
-        img,
-        fps_text,
-        (w - 120, h - 20),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.8,
-        (0, 255, 0),
-        2,
-    )
-
+HEADER_FMT = "<H I H H H I Q" 
+HEADER_SIZE = struct.calcsize(HEADER_FMT) # 严格 24 字节
+MAGIC_BYTES = b'\xcd\xab'                  # 0xABCD 小端字节序
 
 def handle_client(client_sock, client_addr):
+    print(f"连接成功: {client_addr[0]}:{client_addr[1]}")
+    
+    stream_buffer = bytearray()
     frame_buffer = {}
     max_f_id = -1
-    prev_time = 0.0
+    
+    # 核心控制变量：是否已经抓到了首帧头
+    has_found_first_packet = False
+    
+    prev_hw_timestamp = 0.0
     fps = 0.0
 
-    print(f"Client connected: {client_addr[0]}:{client_addr[1]}")
-    print(f"Header format: {HEADER_FMT}, Size: {HEADER_SIZE} bytes")
-
     while True:
-        # 1. 接收固定大小的帧头
-        header_data = recv_exact(client_sock, HEADER_SIZE)
-        if header_data is None:
-            print("Client disconnected")
+        try:
+            data = client_sock.recv(65536)
+            if not data:
+                print("连接断开。")
+                break
+            stream_buffer.extend(data)
+        except Exception as e:
+            print(f"网络异常: {e}")
             break
 
-        # 2. 解包新结构体
-        magic, f_id, p_cnt, p_id, d_len, f_type, ts = struct.unpack(HEADER_FMT, header_data)
-        if magic != MAGIC_NUMBER:
-            print(f"Invalid magic: 0x{magic:04X}")
-            continue
+        while len(stream_buffer) >= HEADER_SIZE:
+            # 1. 滑动寻找魔数 0xABCD
+            if stream_buffer[0:2] != MAGIC_BYTES:
+                idx = stream_buffer.find(MAGIC_BYTES)
+                if idx == -1:
+                    stream_buffer = stream_buffer[-1:]
+                    break
+                else:
+                    del stream_buffer[:idx]
+                    if len(stream_buffer) < HEADER_SIZE:
+                        break
 
-        # 3. 接收有效载荷
-        payload = recv_exact(client_sock, d_len)
-        if payload is None:
-            print("Client disconnected while receiving payload")
-            break
+            # 2. 提取 24 字节帧头进行业务合法性校验
+            header_data = bytes(stream_buffer[:HEADER_SIZE])
+            magic, f_id, p_cnt, p_id, d_len, f_type, ts = struct.unpack(HEADER_FMT, header_data)
 
-        # 丢弃历史过期帧
-        if f_id < max_f_id:
-            continue
+            # 严格过滤由于中途切入把图片内容误认作 Magic 的情况
+            if d_len == 0 or d_len > 65535 or p_cnt == 0 or p_cnt > 1000 or p_id >= p_cnt:
+                del stream_buffer[2:] # 假魔数，弹开前两个字节继续找
+                continue
 
-        # 发现新帧，初始化缓冲区
-        if f_id > max_f_id:
-            max_f_id = f_id
-            frame_buffer.clear()
-            frame_buffer[f_id] = {
-                'type': f_type,   # 存储当前帧的业务类型
-                'pkgs': [None] * p_cnt
-            }
+            # 3. 检查后续载荷数据是否已经接收完整
+            if len(stream_buffer) < HEADER_SIZE + d_len:
+                break # 数据不够，等待下一次 recv
 
-        if p_id >= p_cnt:
-            continue
+            # 4. 【核心实现你的想法】：真包冷启动对齐检测
+            if not has_found_first_packet:
+                # 如果还没建立首帧同步，我们只认当前大帧的第 0 个切片 (pkg_id == 0)
+                if p_id != 0:
+                    # 按照你的思路：不是首包，说明是中途切入的残缺帧残渣，直接释放/弹出
+                    # print(f"中途切入，抛弃残缺帧 {f_id} 的第 {p_id} 包")
+                    del stream_buffer[: HEADER_SIZE + d_len]
+                    continue
+                else:
+                    # 抓到首包了！正式激活存储和解析状态
+                    print(f"成功捕捉到全新帧的首包 (Frame: {f_id})")
+                    has_found_first_packet = True
 
-        # 塞入当前分包
-        frame_buffer[f_id]['pkgs'][p_id] = payload
+            # 5. 精准切下这一片有效载荷并从流中清除
+            payload = bytes(stream_buffer[HEADER_SIZE : HEADER_SIZE + d_len])
+            del stream_buffer[: HEADER_SIZE + d_len]
 
-        # 4. 检查当前帧是否全部收齐
-        if max_f_id in frame_buffer:
+            # 6. 常规过滤历史过期帧（比如重连时引入的旧数据）
+            if f_id < max_f_id:
+                continue
+
+            if f_id > max_f_id:
+                max_f_id = f_id
+                frame_buffer[f_id] = {'type': f_type, 'pkgs': [None] * p_cnt}
+
+            if p_id < p_cnt and f_id in frame_buffer:
+                frame_buffer[f_id]['pkgs'][p_id] = payload
+
+            # 7. 组包与图像渲染
             current_frame = frame_buffer[max_f_id]
-            
             if all(p is not None for p in current_frame['pkgs']):
-                # 核心过滤：只有类型是 IMAGE (1) 时，才去拼图并用 OpenCV 显示
-                if current_frame['type'] == 1:
-                    full_jpg = b"".join(current_frame['pkgs'])
-                    img = cv2.imdecode(np.frombuffer(full_jpg, np.uint8), cv2.IMREAD_COLOR)
-
-                    if img is not None:
-                        curr_time = time.time()
-                        time_diff = curr_time - prev_time
-                        if time_diff > 0:
+                full_jpg = b"".join(current_frame['pkgs'])
+                
+                img = cv2.imdecode(np.frombuffer(full_jpg, np.uint8), cv2.IMREAD_COLOR)
+                if img is not None:
+                    # 硬件时间戳校准防抖
+                    if prev_hw_timestamp > 0:
+                        time_diff = (ts - prev_hw_timestamp) / 1000000.0
+                        if 0 < time_diff < 10.0:
                             real_fps = 1.0 / time_diff
                             fps = (fps * 0.9) + (real_fps * 0.1)
-                        prev_time = curr_time
+                    
+                    prev_hw_timestamp = ts
 
-                        draw_fps(img, fps)
-                        cv2.imshow("TCP Stream", img)
-                else:
-                    # 如果是其他数据类型（例如：DB、COMMOND等），在此扩展相关业务逻辑
-                    # type_name = FILE_TYPE.get(current_frame['type'], "UNKNOWN")
-                    # print(f"Received non-image frame [{max_f_id}], type: {type_name}")
-                    pass
+                    cv2.putText(img, f"FPS: {int(fps)}", (20, 40), 
+                                cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 2)
+                    cv2.imshow("TCP Pure HW-FPS Stream", img)
 
-                # 处理完当前帧后，清理一帧的缓冲区
-                frame_buffer.clear()
+                del frame_buffer[max_f_id]
 
-                if cv2.waitKey(1) & 0xFF == ord("q"):
-                    break
+        if cv2.waitKey(1) & 0xFF == ord("q"):
+            break
 
     client_sock.close()
     cv2.destroyAllWindows()
-
 
 def start_receiver():
     server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     server_sock.bind((TCP_IP, TCP_PORT))
-    server_sock.listen(1)
-
-    print(f"Listening on {TCP_IP}:{TCP_PORT}...")
-
+    server_sock.listen(5)
+    print(f"正在监听端口: {TCP_PORT} ...")
     try:
         while True:
             client_sock, client_addr = server_sock.accept()
             handle_client(client_sock, client_addr)
-    except KeyboardInterrupt:
-        print("\nReceiver stopped")
     finally:
         server_sock.close()
-        cv2.destroyAllWindows()
-
 
 if __name__ == "__main__":
     start_receiver()
