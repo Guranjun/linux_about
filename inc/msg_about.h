@@ -11,6 +11,7 @@ extern "C" {
 #define MAX_MOUDLE_NUM MODULE_ID_MAX
 
 int msg_register_module(Module_ID_e module, MsgHandler_t handler, MsgReleaseHandler_t release);
+int msg_unregister_module(Module_ID_e module);
 void msg_module_handler(Common_Msg_t *msg);
 void msg_module_release_handler(Common_Msg_t *msg);
 int msg_dispatch(Module_ID_e src, Module_ID_e dst, uint32_t len, Msg_Type_e type, void *data);

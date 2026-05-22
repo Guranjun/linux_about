@@ -33,8 +33,10 @@ __attribute__((weak)) void logger_msg_handler(Common_Msg_t *msg) { (void)msg; }
 __attribute__((weak)) void logger_msg_release_handler(Common_Msg_t *msg) { (void)msg; }
 __attribute__((weak)) void storage_msg_handler(Common_Msg_t *msg) { (void)msg; }
 __attribute__((weak)) void storage_msg_release_handler(Common_Msg_t *msg) { (void)msg; }
-__attribute__((weak)) void tcp_msg_handler(Common_Msg_t *msg) { (void)msg; }
-__attribute__((weak)) void tcp_msg_release_handler(Common_Msg_t *msg) { (void)msg; }
+__attribute__((weak)) void tcp_send_msg_handler(Common_Msg_t *msg) { (void)msg; }
+__attribute__((weak)) void tcp_send_msg_release_handler(Common_Msg_t *msg) { (void)msg; }
+__attribute__((weak)) void tcp_recv_msg_handler(Common_Msg_t *msg) { (void)msg; }
+__attribute__((weak)) void tcp_recv_msg_release_handler(Common_Msg_t *msg) { (void)msg; }
 __attribute__((weak)) void command_msg_handler(Common_Msg_t *msg) { (void)msg; }
 __attribute__((weak)) void command_msg_release_handler(Common_Msg_t *msg) { (void)msg; }
 
@@ -49,7 +51,7 @@ static void msg_queue_init_once(void)
     msg_register_module(MODULE_ID_ALARM, alarm_msg_handler, alarm_msg_release_handler);
     msg_register_module(MODULE_ID_LOGGER, logger_msg_handler, logger_msg_release_handler);
     msg_register_module(MODULE_ID_STORAGE, storage_msg_handler, storage_msg_release_handler);
-    msg_register_module(MODULE_ID_TCP, tcp_msg_handler, tcp_msg_release_handler);
+    msg_register_module(MODULE_ID_TCP, tcp_send_msg_handler, tcp_send_msg_release_handler);
     msg_register_module(MODULE_ID_COMMAND, command_msg_handler, command_msg_release_handler);
 }
 

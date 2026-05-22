@@ -8,8 +8,8 @@ extern "C" {
 #endif
 
 void *tcp_send_thread(void *arg);
-void tcp_msg_handler(Common_Msg_t *msg);
-void tcp_thread_wakeup(void);
+void tcp_send_msg_handler(Common_Msg_t *msg);
+void tcp_send_thread_wakeup(void);
 
 #ifdef __cplusplus
 }

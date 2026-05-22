@@ -32,7 +32,15 @@ int msg_register_module(Module_ID_e module, MsgHandler_t handler, MsgReleaseHand
 
     return 0;
 }
-
+int msg_unregister_module(Module_ID_e module) 
+{
+    if ((Module_ID_e)module >= MODULE_ID_MAX) {
+        return -1;
+    }
+    msg_route_valid[module] = 0U; // 让路由失效
+    memset(&msg_route_table[module], 0, sizeof(msg_route_table[module]));
+    return 0;
+}
 void msg_module_handler(Common_Msg_t *msg)
 {
     MsgRouteTable_t *route;
