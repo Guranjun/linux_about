@@ -16,7 +16,7 @@
 #include "my_time.h"
 #include "tcp_send.h"
 #include "msg_about.h"
-
+#include "tcp_shared.h"
 #define TCP_SEND_PORT 8080
 #define TCP_CHUNK_SIZE 1400U
 #define TCP_SEND_BUFFER_INIT_SIZE (256U * 1024U)
@@ -25,10 +25,8 @@ typedef enum{
     TCP_DATA_BIG
 } TCP_DATA_TYPE;
 typedef struct {
-    int Sock;
     struct sockaddr_in dest_addr;
     uint32_t current_frame_id;
-    bool connected;
     bool is_sending;
     FILE_TYPE type;
     TCP_DATA_TYPE data_type;
@@ -38,19 +36,18 @@ typedef struct {
     BigData_Msg_t* p_bigdata_msg;
     Module_ID_e src_module;
     Log_Msg_t log_msg;
-    pthread_mutex_t lock;
-    pthread_cond_t cond;
+    Tcp_Shared_Link_t link;
 } Tcp_Data_Buffer;
 
 static Tcp_Data_Buffer tcp_data_buffer;
 
 static void Tcp_Close_Socket(Tcp_Data_Buffer *tcp_config)
 {
-    if (tcp_config->Sock >= 0) {
-        close(tcp_config->Sock);
-        tcp_config->Sock = -1;
+    if (tcp_config->link.Sock >= 0) {
+        close(tcp_config->link.Sock);
+        tcp_config->link.Sock = -1;
     }
-    tcp_config->connected = false;
+    tcp_config->link.connected = false;
 }
 
 static int Tcp_Open_And_Connect(Tcp_Data_Buffer *tcp_config)
@@ -59,30 +56,30 @@ static int Tcp_Open_And_Connect(Tcp_Data_Buffer *tcp_config)
 
     Tcp_Close_Socket(tcp_config);
 
-    tcp_config->Sock = socket(AF_INET, SOCK_STREAM, 0);
-    if (tcp_config->Sock < 0) {
+    tcp_config->link.Sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (tcp_config->link.Sock < 0) {
         perror("tcp socket");
         return -1;
     }
 
-    setsockopt(tcp_config->Sock, SOL_SOCKET, SO_SNDBUF, &send_buf_size, sizeof(send_buf_size));
+    setsockopt(tcp_config->link.Sock, SOL_SOCKET, SO_SNDBUF, &send_buf_size, sizeof(send_buf_size));
     //设为非阻塞连接，因为阻塞连接阻塞时间过长
-    int flags = fcntl(tcp_config->Sock, F_GETFL, 0);
-    if (flags < 0 || fcntl(tcp_config->Sock, F_SETFL, flags | O_NONBLOCK) < 0) {
+    int flags = fcntl(tcp_config->link.Sock, F_GETFL, 0);
+    if (flags < 0 || fcntl(tcp_config->link.Sock, F_SETFL, flags | O_NONBLOCK) < 0) {
         Tcp_Close_Socket(tcp_config);
         return -1;
     }
     //尝试连接
-    int ret = connect(tcp_config->Sock, (struct sockaddr *)&tcp_config->dest_addr, sizeof(tcp_config->dest_addr));
+    int ret = connect(tcp_config->link.Sock, (struct sockaddr *)&tcp_config->dest_addr, sizeof(tcp_config->dest_addr));
     if (ret < 0) {
         if (errno == EINPROGRESS) {
             // 用 select 设置 50ms 超时
             struct timeval tv = {0, 50000}; // 50ms
             fd_set wfd;
             FD_ZERO(&wfd);
-            FD_SET(tcp_config->Sock, &wfd);
+            FD_SET(tcp_config->link.Sock, &wfd);
 
-            ret = select(tcp_config->Sock + 1, NULL, &wfd, NULL, &tv);
+            ret = select(tcp_config->link.Sock + 1, NULL, &wfd, NULL, &tv);
             if (ret <= 0 || !running) {
                 Tcp_Close_Socket(tcp_config);
                 return -1;
@@ -91,7 +88,7 @@ static int Tcp_Open_And_Connect(Tcp_Data_Buffer *tcp_config)
             // 二次确认网络通路
             int err = 0;
             socklen_t len = sizeof(err);
-            if (getsockopt(tcp_config->Sock, SOL_SOCKET, SO_ERROR, &err, &len) < 0 || err != 0) {
+            if (getsockopt(tcp_config->link.Sock, SOL_SOCKET, SO_ERROR, &err, &len) < 0 || err != 0) {
                 Tcp_Close_Socket(tcp_config);
                 return -1;
             }
@@ -101,7 +98,7 @@ static int Tcp_Open_And_Connect(Tcp_Data_Buffer *tcp_config)
         }
     }
     //切换为阻塞连接发送
-    if (fcntl(tcp_config->Sock, F_SETFL, flags) < 0) {
+    if (fcntl(tcp_config->link.Sock, F_SETFL, flags) < 0) {
         Tcp_Close_Socket(tcp_config);
         return -1;
     }
@@ -114,7 +111,7 @@ static int Tcp_Init(Tcp_Data_Buffer *tcp_config, const char *ip, uint16_t port)
     memset(tcp_config, 0, sizeof(*tcp_config));
     memset(&tcp_config->log_msg, 0, sizeof(tcp_config->log_msg));
     tcp_config->p_bigdata_msg = NULL;
-    tcp_config->Sock = -1;
+    tcp_config->link.Sock = -1;
     tcp_config->dest_addr.sin_family = AF_INET;
     tcp_config->dest_addr.sin_port = htons(port);
     tcp_config->dest_addr.sin_addr.s_addr = inet_addr(ip);
@@ -131,8 +128,8 @@ static int Tcp_Init(Tcp_Data_Buffer *tcp_config, const char *ip, uint16_t port)
         return -1;
     }
 
-    pthread_mutex_init(&tcp_config->lock, NULL);
-    pthread_cond_init(&tcp_config->cond, NULL);
+    pthread_mutex_init(&tcp_config->link.lock, NULL);
+    pthread_cond_init(&tcp_config->link.cond, NULL);
 
     if (Tcp_Open_And_Connect(tcp_config) == 0) {
         printf("TCP Init Success: Target %s:%d\n", ip, port);
@@ -148,8 +145,8 @@ static void Tcp_Deinit(void)
     free(tcp_data_buffer.send_buf);
     tcp_data_buffer.send_buf = NULL;
     tcp_data_buffer.send_buf_capacity = 0;
-    pthread_mutex_destroy(&tcp_data_buffer.lock);
-    pthread_cond_destroy(&tcp_data_buffer.cond);
+    pthread_mutex_destroy(&tcp_data_buffer.link.lock);
+    pthread_cond_destroy(&tcp_data_buffer.link.cond);
     Tcp_Close_Socket(&tcp_data_buffer);
 }
 
@@ -237,7 +234,7 @@ static int Tcp_Send_Frame(Tcp_Data_Buffer *tcp, const uint8_t *send_data, uint32
         hdr.data_len = current_chunk;
         hdr.timestamp = ts;
 
-        if (Tcp_Send_Packet(tcp->Sock, &hdr, send_data + offset) != 0) {
+        if (Tcp_Send_Packet(tcp->link.Sock, &hdr, send_data + offset) != 0) {
             return -1;
         }
     }
@@ -261,12 +258,12 @@ void *tcp_send_thread(void *arg)
         TCP_DATA_TYPE current_data_type;
         Module_ID_e target_module = MODULE_ID_MAX;
 
-        pthread_mutex_lock(&tcp_data_buffer.lock);
+        pthread_mutex_lock(&tcp_data_buffer.link.lock);
         while ((!tcp_data_buffer.is_sending) && running) {
-            pthread_cond_wait(&tcp_data_buffer.cond, &tcp_data_buffer.lock);
+            pthread_cond_wait(&tcp_data_buffer.link.cond, &tcp_data_buffer.link.lock);
         }
         if (!running) {
-            pthread_mutex_unlock(&tcp_data_buffer.lock);
+            pthread_mutex_unlock(&tcp_data_buffer.link.lock);
             break;
         }
         current_data_type = tcp_data_buffer.data_type;
@@ -281,16 +278,17 @@ void *tcp_send_thread(void *arg)
             frame_len = tcp_data_buffer.p_bigdata_msg->total_len;
             data_to_send = tcp_data_buffer.p_bigdata_msg->data_ptr;
         }
-        bool is_conn = tcp_data_buffer.connected; // 锁内读取当前状态
-        pthread_mutex_unlock(&tcp_data_buffer.lock);
+        bool is_conn = tcp_data_buffer.link.connected; // 锁内读取当前状态
+        pthread_mutex_unlock(&tcp_data_buffer.link.lock);
 
         bool send_success = false;
 
         if (!is_conn) {
             if (Tcp_Open_And_Connect(&tcp_data_buffer) == 0) {
-                pthread_mutex_lock(&tcp_data_buffer.lock);
-                tcp_data_buffer.connected = true;
-                pthread_mutex_unlock(&tcp_data_buffer.lock);
+                pthread_mutex_lock(&tcp_data_buffer.link.lock);
+                tcp_data_buffer.link.connected = true;
+                pthread_cond_broadcast(&tcp_data_buffer.link.cond);
+                pthread_mutex_unlock(&tcp_data_buffer.link.lock);
                 is_conn = true; // 标记本次可以尝试发送
             }
         }
@@ -299,9 +297,9 @@ void *tcp_send_thread(void *arg)
                 send_success = true;
             } else {
                 printf("Send file type %d failed, disconnected\n", current_data_type);
-                pthread_mutex_lock(&tcp_data_buffer.lock);
-                tcp_data_buffer.connected = false; // 锁内安全标记断线
-                pthread_mutex_unlock(&tcp_data_buffer.lock);
+                pthread_mutex_lock(&tcp_data_buffer.link.lock);
+                tcp_data_buffer.link.connected = false; // 锁内安全标记断线
+                pthread_mutex_unlock(&tcp_data_buffer.link.lock);
                 send_success = false;
             }
         } 
@@ -310,7 +308,7 @@ void *tcp_send_thread(void *arg)
             send_success = false;
         }
         
-        pthread_mutex_lock(&tcp_data_buffer.lock);
+        pthread_mutex_lock(&tcp_data_buffer.link.lock);
         if (send_success) {
             tcp_data_buffer.current_frame_id++;
         }
@@ -325,7 +323,7 @@ void *tcp_send_thread(void *arg)
             tcp_data_buffer.p_bigdata_msg = NULL;
         }
         tcp_data_buffer.is_sending = false;
-        pthread_mutex_unlock(&tcp_data_buffer.lock);
+        pthread_mutex_unlock(&tcp_data_buffer.link.lock);
     }
 
     Tcp_Deinit();
@@ -342,7 +340,7 @@ void tcp_msg_handler(Common_Msg_t *msg)
                 break;
             }
 
-            pthread_mutex_lock(&tcp_data_buffer.lock);
+            pthread_mutex_lock(&tcp_data_buffer.link.lock);
             if (!tcp_data_buffer.is_sending) {
                 if (Tcp_Ensure_Send_Buffer(&tcp_data_buffer, img_data->len) == 0) {
                     tcp_data_buffer.data_type = TCP_DATA_NORMAL;
@@ -350,10 +348,10 @@ void tcp_msg_handler(Common_Msg_t *msg)
                     memcpy(tcp_data_buffer.send_buf, img_data->data, img_data->len);
                     tcp_data_buffer.type = NORMAL;
                     tcp_data_buffer.is_sending = true;
-                    pthread_cond_signal(&tcp_data_buffer.cond);
+                    pthread_cond_signal(&tcp_data_buffer.link.cond);
                 }
             }
-            pthread_mutex_unlock(&tcp_data_buffer.lock);
+            pthread_mutex_unlock(&tcp_data_buffer.link.lock);
             break;
         }
         case MSG_TYPE_ALARM:
@@ -366,21 +364,21 @@ void tcp_msg_handler(Common_Msg_t *msg)
             if(big_msg == NULL || big_msg->data_ptr == NULL || big_msg->total_len == 0U){
                 break;
             }
-            pthread_mutex_lock(&tcp_data_buffer.lock);
+            pthread_mutex_lock(&tcp_data_buffer.link.lock);
             if(!tcp_data_buffer.is_sending) {
                 tcp_data_buffer.data_type = TCP_DATA_BIG;
                 tcp_data_buffer.p_bigdata_msg = big_msg;
                 tcp_data_buffer.is_sending = true;
                 tcp_data_buffer.src_module = msg->src_module;
                 tcp_data_buffer.type = big_msg->type;
-                pthread_cond_signal(&tcp_data_buffer.cond);
+                pthread_cond_signal(&tcp_data_buffer.link.cond);
                 //msg->src_module = MODULE_ID_TCP;
-                pthread_mutex_unlock(&tcp_data_buffer.lock);
+                pthread_mutex_unlock(&tcp_data_buffer.link.lock);
             }
             else {
                 //申请重发
                 //memset(&tcp_config->bigdata_msg, 0, sizeof(tcp_config->bigdata_msg));
-                pthread_mutex_unlock(&tcp_data_buffer.lock);
+                pthread_mutex_unlock(&tcp_data_buffer.link.lock);
                 big_msg->status = RESEND;
                 msg_dispatch(MODULE_ID_TCP, msg->src_module, big_msg->total_len, MSG_TYPE_BIGDATA, big_msg);
             }
@@ -394,7 +392,7 @@ void tcp_msg_handler(Common_Msg_t *msg)
 
 void tcp_thread_wakeup(void)
 {
-    pthread_mutex_lock(&tcp_data_buffer.lock);
-    pthread_cond_signal(&tcp_data_buffer.cond);
-    pthread_mutex_unlock(&tcp_data_buffer.lock);
+    pthread_mutex_lock(&tcp_data_buffer.link.lock);
+    pthread_cond_signal(&tcp_data_buffer.link.cond);
+    pthread_mutex_unlock(&tcp_data_buffer.link.lock);
 }
