@@ -13,7 +13,7 @@
 #include "alarm.hpp"
 #include "storage_video.hpp"
 #include "log.h"
-int running = 1;
+volatile int running = 1;
 
 
 // 信号处理函数

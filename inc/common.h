@@ -124,7 +124,7 @@ typedef struct {
     
 } __attribute__((packed)) Frame_Header;
 
-extern int running;
+extern volatile int running;
 
 
 void msg_init(void);
