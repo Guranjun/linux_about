@@ -188,7 +188,7 @@ void* storage_video_thread(void* arg)
     }
     if(fp)
         fclose(fp);
-
+    msg_unregister_module(MODULE_ID_STORAGE);
 }
 
 

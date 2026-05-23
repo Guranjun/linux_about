@@ -48,6 +48,7 @@ static void log_init(void)
 
 static void log_deinit(void)
 {
+    msg_unregister_module(MODULE_ID_LOGGER);
     pthread_mutex_destroy( &log_data_buf.lock);
     pthread_cond_destroy( &log_data_buf.cond);
 }

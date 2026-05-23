@@ -14,7 +14,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-
+//模块ID枚举
 typedef enum {
     MODULE_ID_V4L2 = 0,
     MODULE_ID_UDP,
@@ -26,6 +26,7 @@ typedef enum {
     MODULE_ID_COMMAND,
     MODULE_ID_MAX
 } Module_ID_e;
+//用于标识bigdata数据传输的状态
 typedef enum {
     IDLE = 0,
     SEND,
@@ -33,6 +34,7 @@ typedef enum {
     DONE,
     FILE_DELIVER_ERROR
 } STATUS;
+//文件类型的定义
 typedef enum {
     NORMAL = 0,
     IMAGE,
@@ -40,6 +42,7 @@ typedef enum {
     VIDEO,
     COMMOND
 } FILE_TYPE;
+//消息类型的定义
 typedef enum {
     MSG_TYPE_IMAGE = 0,
     MSG_TYPE_ALARM,
@@ -47,13 +50,14 @@ typedef enum {
     MSG_TYPE_COMMAND,
     MSG_TYPE_BIGDATA
 } Msg_Type_e;
-
+//告警等级的定义
 typedef enum {
     SAFE = 0,
     MOVED
 } Alarm_Level;
 
 #ifdef MSG_ENABLE_PRIORITY
+//消息优先级的定义
 typedef enum {
     MSG_PRIORITY_LOW = 0,
     MSG_PRIORITY_NORMAL,
@@ -61,7 +65,7 @@ typedef enum {
     MSG_PRIORITY_URGENT
 } Msg_Priority_e;
 #endif
-
+//通用消息结构体定义
 typedef struct {
     Module_ID_e src_module;
     Module_ID_e dst_module;
@@ -73,7 +77,7 @@ typedef struct {
 #endif
     void *data;
 } Common_Msg_t;
-
+//大数据消息结构体定义
 typedef struct {
     void *data_ptr;
     uint32_t total_len;
@@ -81,24 +85,24 @@ typedef struct {
     STATUS status;
     int fd;
 } BigData_Msg_t;
-
+//消息接受释放函数指针类型定义
 typedef void (*MsgHandler_t)(Common_Msg_t *msg);
 typedef void (*MsgReleaseHandler_t)(Common_Msg_t *msg);
-
+//日志等级定义
 typedef enum {
     DEBUG = 0,
     INFO,
     WARN,
     LOG_ERROR
 } LOG_LEVEL;
-
+//日志消息结构体定义
 typedef struct {
     LOG_LEVEL level;
     uint64_t timestamp;
     Module_ID_e module;
     char content[64];
 } Log_Msg_t;
-
+//图像数据结构体定义
 typedef struct {
     uint64_t timestamps;
     uint32_t len;
@@ -108,12 +112,12 @@ typedef struct {
 
 typedef struct {
 } Log_Data;
-
+//告警数据结构体定义
 typedef struct {
     Alarm_Level status;
 } Alarm_Data;
 
-
+//网络传输帧头定义
 typedef struct {
     uint16_t magic;		//帧头标志
 	uint32_t frame_id;	//帧ID

@@ -82,6 +82,7 @@ static int Udp_Init(UDP_Send_Buffer *udp_config, const char *ip, uint16_t port)
 static void Udp_Release(void)
 {
     free(udp_send_buffer.send_buf);
+    msg_unregister_module(MODULE_ID_UDP);
     pthread_mutex_destroy(&udp_send_buffer.lock);
     pthread_cond_destroy(&udp_send_buffer.cond);
     close(udp_send_buffer.Sock);

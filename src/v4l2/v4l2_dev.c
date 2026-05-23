@@ -215,6 +215,7 @@ void *camera_capture_thread(void *arg)
         }
     }
 	v4l2_data_buffer_destroy();
+	msg_unregister_module(MODULE_ID_V4L2);
 	close(cam.fd);
 	return NULL;
 }

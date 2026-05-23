@@ -34,6 +34,13 @@ static void Process_Data_Init(void)
     pthread_mutex_init(&process_data.lock, NULL);
     pthread_cond_init(&process_data.cond, NULL);
 }
+static void Process_Data_Deinit(void)
+{
+    //free(process_data.frame_buffer);
+    msg_unregister_module(MODULE_ID_ALARM);
+    pthread_mutex_destroy(&process_data.lock);
+    pthread_cond_destroy(&process_data.cond);
+}
 #ifdef __cplusplus
 extern "C" 
 {
@@ -82,6 +89,7 @@ void* process_image_thread(void* arg)
 #endif
         
     }
+    Process_Data_Deinit();
     return nullptr;
 }
 
