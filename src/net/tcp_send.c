@@ -17,6 +17,7 @@
 #include "tcp_send.h"
 #include "msg_about.h"
 #include "tcp_shared.h"
+#include "crc.h"
 #define TCP_SEND_PORT 8080
 #define TCP_CHUNK_SIZE 1400U
 #define TCP_SEND_BUFFER_INIT_SIZE (256U * 1024U)
@@ -145,6 +146,7 @@ static void Tcp_Deinit(void)
     free(tcp_data_buffer.send_buf);
     tcp_data_buffer.send_buf = NULL;
     tcp_data_buffer.send_buf_capacity = 0;
+    msg_unregister_module(MODULE_ID_TCP_SEND);
     pthread_mutex_destroy(&tcp_data_buffer.link.lock);
     pthread_cond_destroy(&tcp_data_buffer.link.cond);
     Tcp_Close_Socket(&tcp_data_buffer);
@@ -233,7 +235,9 @@ static int Tcp_Send_Frame(Tcp_Data_Buffer *tcp, const uint8_t *send_data, uint32
         hdr.type = type;
         hdr.data_len = current_chunk;
         hdr.timestamp = ts;
-
+        hdr.reserved1 = 0;
+        hdr.reserved2 = 0;
+        hdr.crc = crc16_ccitt((uint8_t *)&hdr, sizeof(Frame_Header) - 2);
         if (Tcp_Send_Packet(tcp->link.Sock, &hdr, send_data + offset) != 0) {
             return -1;
         }
@@ -250,7 +254,7 @@ void *tcp_send_thread(void *arg)
     if (Tcp_Init(&tcp_data_buffer, ip_address, TCP_SEND_PORT) != 0) {
         return NULL;
     }
-
+    Tcp_Shared_Post_Link(&tcp_data_buffer.link);
     while (running) {
         uint32_t frame_len;
         uint8_t *data_to_send;
@@ -315,7 +319,7 @@ void *tcp_send_thread(void *arg)
         if (current_data_type == TCP_DATA_BIG) {
             tcp_data_buffer.p_bigdata_msg->status = send_success ? DONE : FILE_DELIVER_ERROR;
             //建议这个操作在锁外执行，引入一个新的指针变量，保存这个p_bigdata_msg的指针值
-            msg_dispatch(MODULE_ID_TCP, 
+            msg_dispatch(MODULE_ID_TCP_SEND, 
                          target_module, 
                          tcp_data_buffer.p_bigdata_msg->total_len, 
                          MSG_TYPE_BIGDATA, 
@@ -330,7 +334,7 @@ void *tcp_send_thread(void *arg)
     return NULL;
 }
 
-void tcp_msg_handler(Common_Msg_t *msg)
+void tcp_send_msg_handler(Common_Msg_t *msg)
 {
     switch (msg->msg_type) {
         case MSG_TYPE_IMAGE: {
@@ -372,7 +376,7 @@ void tcp_msg_handler(Common_Msg_t *msg)
                 tcp_data_buffer.src_module = msg->src_module;
                 tcp_data_buffer.type = big_msg->type;
                 pthread_cond_signal(&tcp_data_buffer.link.cond);
-                //msg->src_module = MODULE_ID_TCP;
+                //msg->src_module = MODULE_ID_TCP_SEND;
                 pthread_mutex_unlock(&tcp_data_buffer.link.lock);
             }
             else {
@@ -380,7 +384,7 @@ void tcp_msg_handler(Common_Msg_t *msg)
                 //memset(&tcp_config->bigdata_msg, 0, sizeof(tcp_config->bigdata_msg));
                 pthread_mutex_unlock(&tcp_data_buffer.link.lock);
                 big_msg->status = RESEND;
-                msg_dispatch(MODULE_ID_TCP, msg->src_module, big_msg->total_len, MSG_TYPE_BIGDATA, big_msg);
+                msg_dispatch(MODULE_ID_TCP_SEND, msg->src_module, big_msg->total_len, MSG_TYPE_BIGDATA, big_msg);
             }
             
             break;
@@ -390,7 +394,7 @@ void tcp_msg_handler(Common_Msg_t *msg)
     }
 }
 
-void tcp_thread_wakeup(void)
+void tcp_send_thread_wakeup(void)
 {
     pthread_mutex_lock(&tcp_data_buffer.link.lock);
     pthread_cond_signal(&tcp_data_buffer.link.cond);
