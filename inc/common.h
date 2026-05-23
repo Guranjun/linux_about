@@ -117,16 +117,18 @@ typedef struct {
     Alarm_Level status;
 } Alarm_Data;
 
-//网络传输帧头定义
+//网络传输帧头定义，总共32个字节
 typedef struct {
     uint16_t magic;		//帧头标志
+    uint16_t data_len;	//数据长度
 	uint32_t frame_id;	//帧ID
 	uint16_t pkg_cnt;	//分包总数
 	uint16_t pkg_id;	//分包ID
-	uint16_t data_len;	//数据长度
     FILE_TYPE type;     //数据类型
 	uint64_t timestamp;	//时间戳
-    
+    uint32_t reserved1; //4字节的保留位
+    uint16_t reserved2; //2字节的保留位
+    uint16_t crc;       //CRC检测码
 } __attribute__((packed)) Frame_Header;
 
 extern volatile int running;

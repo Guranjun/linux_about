@@ -108,7 +108,9 @@ static void Udp_Send_Frame(UDP_Send_Buffer *udp, uint8_t *send_data, uint32_t se
         hdr.pkg_id = i;
         hdr.data_len = current_chunk;
         hdr.timestamp = ts;
-
+        hdr.reserved1 = 0;
+        hdr.reserved2 = 0;
+        hdr.crc = crc16_ccitt((uint8_t *)&hdr, sizeof(Frame_Header) - 2);
         send_packet_optimized(udp->Sock, &hdr, send_data + (i * CHUNK_SIZE), &udp->dest_addr);
     }
     //printf("Sended!%d\n",udp->current_frame_id);
