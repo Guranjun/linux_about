@@ -20,12 +20,12 @@ inc/OpenCV-MinGW-Build-OpenCV-4.5.5-x64/
 cpp/
 build/
 DB/
-QT/
 trash/
 py_for_pc/venv_yolo/
 bin/
 *.db
 *.o
 *.mp4
+*.ui
 ### yolo ###
 yolov8n.pt
