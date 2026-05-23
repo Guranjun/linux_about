@@ -19,6 +19,8 @@ py_for_pc/TestForOpenCV/
 inc/OpenCV-MinGW-Build-OpenCV-4.5.5-x64/
 cpp/
 build/
+DB/
+trash/
 py_for_pc/venv_yolo/
 bin/
 *.db

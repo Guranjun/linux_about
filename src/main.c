@@ -22,7 +22,7 @@ void stop_handler(int sig) {
     running = 0;
     msg_thread_wakeup(); // 关键：拍醒所有正在 cond_wait 的线程，让它们检查 running 标志并退出
     udp_thread_wakeup(); // 关键：拍醒所有正在 cond_wait 的线程，让它们检查 running 标志并退出
-    tcp_thread_wakeup();
+    tcp_send_thread_wakeup();
     alarm_thread_wakeup();
     storage_thread_wakeup();
     logger_thread_wakeup();
