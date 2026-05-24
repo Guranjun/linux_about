@@ -1,4 +1,4 @@
-#include "crc16.h"
+#include "crc.h"
 
 // CRC16-CCITT / XMODEM 查找表 (多项式 0x1021)
 static const uint16_t crc16_table[256] = {

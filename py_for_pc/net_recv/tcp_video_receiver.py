@@ -3,6 +3,7 @@ import struct
 import time
 import cv2
 import numpy as np
+import threading  # 💡 引入多线程模块
 
 # ================= 配置参数 =================
 TCP_IP = "0.0.0.0"
@@ -24,9 +25,72 @@ def crc16_ccitt_xmodem(data: bytes) -> int:
                 crc = (crc << 1) & 0xFFFF
     return crc
 
+# ================= 🎯 新增：打包并发送自定义命令的函数 =================
+def send_command(client_sock, mod_id: int, cmd_id: int):
+    """
+    按照 C 语言要求的 32字节帧头 + JSON载荷 格式发送控制命令
+    """
+    try:
+        # 1. 构造 JSON 字符串载荷
+        json_str = f'{{"mod":{mod_id},"cmd":{cmd_id}}}'
+        payload = json_str.encode('utf-8')
+        d_len = len(payload)
+        
+        # 2. 预打包前 30 字节的帧头字段（留出最后的 CRC 空间）
+        # 字段顺序对应你的：magic, d_len, f_id, p_cnt, p_id, f_type, ts, res1, res2
+        # 我们把 magic 填 0xABCD，d_len 填 json 长度，其他业务字段填 0 即可
+        header_temp = struct.pack("< H H I H H I Q I H", 
+                                  0xABCD, d_len, 0, 1, 0, 0, int(time.time()*1000), 0, 0)
+        
+        # 3. 计算前 30 字节的 CRC16
+        calc_crc = crc16_ccitt_xmodem(header_temp)
+        
+        # 4. 把 CRC 拼接到最后 2 字节，组合成完美的 32 字节真帧头
+        full_header = header_temp + struct.pack("< H", calc_crc)
+        
+        # 5. 帧头 + 载荷 一并打包发送
+        client_sock.sendall(full_header + payload)
+        print(f" -> 【发送成功】已下发控制命令: {json_str} (Payload长: {d_len} 字节)")
+    except Exception as e:
+        print(f" ❌ 【发送失败】下发命令异常: {e}")
+
+# ================= 🎯 新增：后台键盘输入监听线程 =================
+def keyboard_input_thread(client_sock, stop_event):
+    """
+    在后台运行，等待用户在终端输入命令
+    """
+    print("\n⌨️  [命令模式已开启]：可在下方终端随时输入控制命令！")
+    print("👉 格式示例: 1 10 (表示 mod=1, cmd=10)，输入 'q' 退出发送")
+    
+    while not stop_event.is_set():
+        try:
+            user_input = input().strip()
+            if user_input.lower() == 'q':
+                break
+                
+            # 解析输入的模块ID和命令ID
+            parts = user_input.split()
+            if len(parts) == 2:
+                mod_id = int(parts[0])
+                cmd_id = int(parts[1])
+                # 调用发送函数
+                send_command(client_sock, mod_id, cmd_id)
+            else:
+                print("⚠️ 输入格式错误！请输入两个数字并用空格隔开，例如: 1 10")
+        except ValueError:
+            print("⚠️ 输入错误！ID必须是整数。")
+        except Exception:
+            break
+
+
 def handle_client(client_sock, client_addr):
     print(f"连接成功: {client_addr[0]}:{client_addr[1]}")
     
+    # 🎯 【核心注入】：创建并启动发送端线程
+    stop_send_event = threading.Event()
+    send_thr = threading.Thread(target=keyboard_input_thread, args=(client_sock, stop_send_event), daemon=True)
+    send_thr.start()
+
     stream_buffer = bytearray()
     frame_buffer = {}
     max_f_id = -1
@@ -60,20 +124,17 @@ def handle_client(client_sock, client_addr):
             # 2. 提取 32 字节帧头
             header_data = bytes(stream_buffer[:HEADER_SIZE])
             
-            # 3. ★★★ 终极防御：在解包之前/后，立刻执行帧头第一道物理层 CRC 校验 ★★★
-            # 帧头一共 32 字节，最后 2 字节是 CRC，因此我们拿前 30 字节做校验
+            # 3. 第一道物理层 CRC 校验
             local_crc = crc16_ccitt_xmodem(header_data[:30])
             
-            # 解包出所有字段
+            # 解包所有字段
             magic, d_len, f_id, p_cnt, p_id, f_type, ts, res1, res2, received_crc = struct.unpack(HEADER_FMT, header_data)
 
-            # 如果算出来的 local_crc 跟 C 语言发过来的 received_crc 不相等
             if local_crc != received_crc:
-                # print("⚠️ 警报：踩到 Payload 内部伪造的假魔数，已被 CRC16 成功拦截！")
-                del stream_buffer[2:] # 判定为假魔数，弹开前两个字节继续往后搜索
+                del stream_buffer[2:] 
                 continue
 
-            # --- 走到这里，说明魔数和 CRC 全部对上，100% 是真帧头，进入业务强校验 ---
+            # --- 走进业务强校验 ---
             if d_len == 0 or d_len > 65535 or p_cnt == 0 or p_cnt > 1000 or p_id >= p_cnt:
                 del stream_buffer[2:] 
                 continue
@@ -126,8 +187,23 @@ def handle_client(client_sock, client_addr):
 
         if cv2.waitKey(1) & 0xFF == ord("q"): break
 
+    # 退出清理
+    stop_send_event.set() 
     client_sock.close()
     cv2.destroyAllWindows()
 
 if __name__ == "__main__":
-    handle_client()
+    server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server_sock.bind((TCP_IP, TCP_PORT))
+    server_sock.listen(5)
+    print(f"📡 TCP 上位机服务器已启动，正在监听端口 {TCP_PORT}...")
+
+    try:
+        while True:
+            client_sock, client_addr = server_sock.accept()
+            handle_client(client_sock, client_addr)
+    except KeyboardInterrupt:
+        print("\n服务器安全退出。")
+    finally:
+        server_sock.close()

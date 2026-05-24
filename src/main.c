@@ -13,6 +13,7 @@
 #include "alarm.hpp"
 #include "storage_video.hpp"
 #include "log.h"
+#include "tcp_recv.h"
 volatile int running = 1;
 
 
@@ -23,6 +24,7 @@ void stop_handler(int sig) {
     msg_thread_wakeup(); // 关键：拍醒所有正在 cond_wait 的线程，让它们检查 running 标志并退出
     udp_thread_wakeup(); // 关键：拍醒所有正在 cond_wait 的线程，让它们检查 running 标志并退出
     tcp_send_thread_wakeup();
+    tcp_recv_thread_wakeup();
     alarm_thread_wakeup();
     storage_thread_wakeup();
     logger_thread_wakeup();
@@ -42,10 +44,11 @@ int main(int argc,char **argv)
     signal(SIGINT, stop_handler);
     /*初始化共享缓冲区*/
     /*线程相关的定义*/
-    pthread_t t_camera_capture, t_udp_send, t_tcp_send, t_image_process, t_msg_deliver, t_image_storage, t_log_process;
+    pthread_t t_camera_capture, t_udp_send, t_tcp_send, t_image_process, t_msg_deliver, t_image_storage, t_log_process, t_tcp_recv;
     pthread_create(&t_camera_capture, NULL, camera_capture_thread, (void *)argv[1]);
     pthread_create(&t_udp_send, NULL, udp_send_thread, (void *)argv[2]);
     pthread_create(&t_tcp_send, NULL, tcp_send_thread, (void *)argv[2]);
+    pthread_create(&t_tcp_recv, NULL, tcp_recv_thread, NULL);
     pthread_create(&t_image_process, NULL, process_image_thread, NULL);
     pthread_create(&t_msg_deliver, NULL, msg_deliver_thread, NULL);
     pthread_create(&t_image_storage, NULL, storage_video_thread, NULL);
@@ -53,6 +56,7 @@ int main(int argc,char **argv)
     pthread_join(t_camera_capture, NULL);
     pthread_join(t_udp_send, NULL);
     pthread_join(t_tcp_send, NULL);
+    pthread_join(t_tcp_recv, NULL);
     pthread_join(t_image_process, NULL);
     pthread_join(t_msg_deliver, NULL);
     pthread_join(t_image_storage, NULL);

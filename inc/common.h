@@ -40,7 +40,7 @@ typedef enum {
     IMAGE,
     DB,
     VIDEO,
-    COMMOND
+    COMMAND
 } FILE_TYPE;
 //消息类型的定义
 typedef enum {
@@ -55,7 +55,20 @@ typedef enum {
     SAFE = 0,
     MOVED
 } Alarm_Level;
+typedef enum {
+    CMD_NOR = 0x0000,
+    
+    CMD_V4L2_ = 0x0100,
 
+    CMD_STORAGE_ = 0x0200,
+
+    CMD_LOG_ = 0x0300,
+
+    CMD_UDP = 0x0400,
+
+    CMD_TCP = 0x0500
+
+}CMD_ID;
 #ifdef MSG_ENABLE_PRIORITY
 //消息优先级的定义
 typedef enum {
@@ -102,6 +115,9 @@ typedef struct {
     Module_ID_e module;
     char content[64];
 } Log_Msg_t;
+typedef struct {
+    CMD_ID cmd;
+}Command_Msg_t;
 //图像数据结构体定义
 typedef struct {
     uint64_t timestamps;

@@ -134,6 +134,7 @@ static int Tcp_Init(Tcp_Data_Buffer *tcp_config, const char *ip, uint16_t port)
 
     if (Tcp_Open_And_Connect(tcp_config) == 0) {
         printf("TCP Init Success: Target %s:%d\n", ip, port);
+        tcp_config->link.connected = true;
     } else {
         printf("TCP Init Warning: connect %s:%d failed, will retry on send\n", ip, port);
     }
