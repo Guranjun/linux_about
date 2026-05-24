@@ -6,7 +6,7 @@
 #include <pthread.h>
 #include <stdint.h>
 #include <time.h>
-
+#include "cJSON.h"
 #define FRAME_HIGH 240
 #define FRAME_WIDTH 320
 #define V4L2_BUF_COUNT 2
@@ -115,9 +115,13 @@ typedef struct {
     Module_ID_e module;
     char content[64];
 } Log_Msg_t;
+//命令消息结构体定义
 typedef struct {
-    CMD_ID cmd;
-}Command_Msg_t;
+    CMD_ID cmd;           // 命令ID，例如 CMD_V4L2_ + 1
+    Module_ID_e src;      // 来源模块（固定 MODULE_ID_TCP_RECV）
+    int type;             // JSON 中的 type 字段（0=control,1=query,2=file,3=config）
+    cJSON *param;         // JSON 中的 param 子节点（里面可以嵌套任意内容）
+} Command_Msg_t;
 //图像数据结构体定义
 typedef struct {
     uint64_t timestamps;
