@@ -224,7 +224,6 @@ static void cmd_deliver(Frame_Header* hdr, uint8_t* data)
             //取锁
             //if(!tcp_recv_buffer.cmd_msg_received){
                 tcp_recv_buffer.cmd_msg.cmd = (CMD_ID)cmd_id;
-                printf("mod:%d,cmd:%d\n",module_id,cmd_id);
                 //log_make(&tcp_recv_buffer.log_msg, LOG_INFO, gettime_us(),
                 //    MODULE_ID_TCP_RECV, "JSON parse success!");
                 //msg_dispatch(MODULE_ID_TCP_RECV, MODULE_ID_LOGGER, sizeof(tcp_recv_buffer.log_msg), MSG_TYPE_LOG, &tcp_recv_buffer.log_msg);
@@ -257,9 +256,7 @@ void* tcp_recv_thread(void* arg)
 
     Tcp_Recv_Init();
     msg_register_module(MODULE_ID_TCP_RECV, tcp_recv_msg_handler, tcp_recv_msg_release_handler);
-    printf("before link\n");
     tcp_recv_buffer.link = Tcp_Shared_Wait_Link();
-    printf("after link\n");
     int local_sock = -1;
 
     while (running) {
@@ -296,7 +293,6 @@ void* tcp_recv_thread(void* arg)
 
             /* 2. 校验帧头: magic + CRC */
             uint16_t crc = crc16_ccitt((uint8_t*)&hdr, sizeof(Frame_Header) - 2);
-            printf("the crc is 0x%04X",crc);
             if (hdr.magic != 0xABCD || crc != hdr.crc) {
                 log_make(&tcp_recv_buffer.log_msg, WARN, gettime_us(),
                          MODULE_ID_TCP_RECV, "Bad header, sync search...");
