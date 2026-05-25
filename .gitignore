@@ -26,6 +26,5 @@ bin/
 *.db
 *.o
 *.mp4
-*.ui
 ### yolo ###
 yolov8n.pt
