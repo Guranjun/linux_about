@@ -3,6 +3,9 @@
 #include <QObject>
 #include <QUdpSocket>
 #include <QNetworkDatagram>
+#include <QMap>
+#include <QByteArray>
+#include <QList>
 #define MY_PORT 8080
 class UdpReceiverWorker : public QObject
 {
@@ -23,5 +26,9 @@ signals:
 private:
     QUdpSocket *my_udpsocket = nullptr;
     const quint16 my_port = MY_PORT;
+    typedef QMap<uint16_t, QByteArray> FramePackets;
+    QMap<uint32_t, FramePackets> m_frameBuffer;
+    uint32_t m_lastCompleteFrameId = 0;
+    void cleanExpiredFrames(uint32_t currentFrameId);
 };
 #endif // UDPRECEIVERWORKER_H
