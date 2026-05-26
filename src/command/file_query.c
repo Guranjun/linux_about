@@ -13,6 +13,13 @@
 
 static Log_Msg_t log_msg;
 
+/**
+ * @brief 扫描指定目录下的所有 .avi 文件
+ * @param path      扫描路径，如 "/mnt/sdcard"
+ * @param out_files 输出：文件名数组（不含路径），需调用 free_file_list 释放
+ * @param out_count 输出：文件数量
+ * @return 0=成功, -1=失败
+ */
 int scan_avi_files(const char *path, const char ***out_files, int *out_count)
 {
     char pattern[256];
@@ -65,6 +72,11 @@ int scan_avi_files(const char *path, const char ***out_files, int *out_count)
     return 0;
 }
 
+/**
+ * @brief 释放 scan_avi_files 返回的文件列表
+ * @param files  文件名数组（由 scan_avi_files 分配）
+ * @param count  文件数量
+ */
 void free_file_list(const char **files, int count)
 {
     if (files == NULL) return;
@@ -76,6 +88,10 @@ void free_file_list(const char **files, int count)
     free(files);
 }
 
+/**
+ * @brief 处理查询文件列表命令 (CMD_STORAGE_QUERY_FILES)
+ *        扫描 /mnt/sdcard/*.avi 后通过 json_send_response 发送结果
+ */
 void handle_query_files(void)
 {
     const char **files = NULL;

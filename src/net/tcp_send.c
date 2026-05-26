@@ -21,27 +21,39 @@
 #define TCP_SEND_PORT 8080
 #define TCP_CHUNK_SIZE 1400U
 #define TCP_SEND_BUFFER_INIT_SIZE (256U * 1024U)
+
+/**
+ * @brief TCP 发送数据类型枚举
+ */
 typedef enum{
-    TCP_DATA_NORMAL = 0,
-    TCP_DATA_BIG
+    TCP_DATA_NORMAL = 0, /**< 普通数据（从发送缓冲区拷贝） */
+    TCP_DATA_BIG         /**< 大数据（零拷贝引用外部数据） */
 } TCP_DATA_TYPE;
+
+/**
+ * @brief TCP 发送线程私有数据结构体
+ */
 typedef struct {
-    struct sockaddr_in dest_addr;
-    uint32_t current_frame_id;
-    bool is_sending;
-    FILE_TYPE type;
-    TCP_DATA_TYPE data_type;
-    uint8_t *send_buf;
-    uint32_t send_buf_len;
-    uint32_t send_buf_capacity;
-    BigData_Msg_t* p_bigdata_msg;
-    Module_ID_e src_module;
-    Log_Msg_t log_msg;
-    Tcp_Shared_Link_t link;
+    struct sockaddr_in dest_addr;       /**< 目标地址 */
+    uint32_t current_frame_id;          /**< 当前帧 ID 计数器 */
+    bool is_sending;                    /**< 是否有数据待发送 */
+    FILE_TYPE type;                     /**< 发送数据的文件类型 */
+    TCP_DATA_TYPE data_type;            /**< 发送数据类型（正常/大数据） */
+    uint8_t *send_buf;                  /**< 普通数据发送缓冲区 */
+    uint32_t send_buf_len;              /**< 发送缓冲区当前数据长度 */
+    uint32_t send_buf_capacity;         /**< 发送缓冲区容量 */
+    BigData_Msg_t* p_bigdata_msg;       /**< 大数据消息指针 */
+    Module_ID_e src_module;             /**< 数据来源模块 ID */
+    Log_Msg_t log_msg;                  /**< 日志消息缓冲区 */
+    Tcp_Shared_Link_t link;             /**< 共享链接信息（与 tcp_recv 共享） */
 } Tcp_Data_Buffer;
 
 static Tcp_Data_Buffer tcp_data_buffer;
 
+/**
+ * @brief 关闭 TCP  socket 并重置连接状态
+ * @param tcp_config TCP 配置指针
+ */
 static void Tcp_Close_Socket(Tcp_Data_Buffer *tcp_config)
 {
     if (tcp_config->link.Sock >= 0) {
@@ -51,6 +63,13 @@ static void Tcp_Close_Socket(Tcp_Data_Buffer *tcp_config)
     tcp_config->link.connected = false;
 }
 
+/**
+ * @brief 打开 TCP socket 并尝试连接目标服务器
+ * @param tcp_config TCP 配置指针
+ * @return 0=成功, -1=失败
+ *
+ * 使用非阻塞 connect + select 超时机制，避免长时间阻塞
+ */
 static int Tcp_Open_And_Connect(Tcp_Data_Buffer *tcp_config)
 {
     int send_buf_size = 1024 * 1024;
@@ -107,6 +126,15 @@ static int Tcp_Open_And_Connect(Tcp_Data_Buffer *tcp_config)
     return 0;
 }
 
+/**
+ * @brief 初始化 TCP 发送模块
+ * @param tcp_config TCP 配置指针
+ * @param ip         目标 IP 地址
+ * @param port       目标端口
+ * @return 0=成功, -1=失败
+ *
+ * 分配发送缓冲区，初始化互斥锁/条件变量，并尝试首次连接
+ */
 static int Tcp_Init(Tcp_Data_Buffer *tcp_config, const char *ip, uint16_t port)
 {
     memset(tcp_config, 0, sizeof(*tcp_config));
@@ -142,6 +170,9 @@ static int Tcp_Init(Tcp_Data_Buffer *tcp_config, const char *ip, uint16_t port)
     return 0;
 }
 
+/**
+ * @brief 反初始化 TCP 发送模块，释放资源
+ */
 static void Tcp_Deinit(void)
 {
     free(tcp_data_buffer.send_buf);
@@ -153,6 +184,12 @@ static void Tcp_Deinit(void)
     Tcp_Close_Socket(&tcp_data_buffer);
 }
 
+/**
+ * @brief 检查并确保发送缓冲区有足够容量
+ * @param tcp_config   TCP 配置指针
+ * @param required_len 所需的最小字节数
+ * @return 0=足够, -1=不足（建议改用大数据路径）
+ */
 static int Tcp_Ensure_Send_Buffer(Tcp_Data_Buffer *tcp_config, uint32_t required_len)
 {
 
@@ -167,6 +204,13 @@ static int Tcp_Ensure_Send_Buffer(Tcp_Data_Buffer *tcp_config, uint32_t required
     
 }
 
+/**
+ * @brief 阻塞发送指定长度的数据到 socket
+ * @param sock socket 描述符
+ * @param buf  数据缓冲区
+ * @param len  要发送的字节数
+ * @return 0=成功, -1=失败
+ */
 static int Tcp_Send_All(int sock, const uint8_t *buf, size_t len)
 {
     size_t total_sent = 0;
@@ -193,6 +237,13 @@ static int Tcp_Send_All(int sock, const uint8_t *buf, size_t len)
     return 0;
 }
 
+/**
+ * @brief 发送一个数据包（帧头 + 载荷）
+ * @param sock   socket 描述符
+ * @param header 帧头指针
+ * @param data   载荷数据指针
+ * @return 0=成功, -1=失败
+ */
 static int Tcp_Send_Packet(int sock, const Frame_Header *header, const uint8_t *data)
 {
     if (Tcp_Send_All(sock, (const uint8_t *)header, sizeof(*header)) != 0) {
@@ -206,6 +257,16 @@ static int Tcp_Send_Packet(int sock, const Frame_Header *header, const uint8_t *
     return Tcp_Send_All(sock, data, header->data_len);
 }
 
+/**
+ * @brief 将数据分帧发送（自动分包）
+ * @param tcp        TCP 配置指针
+ * @param send_data  要发送的数据
+ * @param send_len   数据长度
+ * @param type       文件类型
+ * @return 0=成功, -1=失败
+ *
+ * 数据按 TCP_CHUNK_SIZE (1400 字节) 分包，每包添加 32 字节帧头
+ */
 static int Tcp_Send_Frame(Tcp_Data_Buffer *tcp, const uint8_t *send_data, uint32_t send_len, FILE_TYPE type)
 {
     uint16_t total_pkgs;
@@ -248,6 +309,18 @@ static int Tcp_Send_Frame(Tcp_Data_Buffer *tcp, const uint8_t *send_data, uint32
     return 0;
 }
 
+/**
+ * @brief TCP 发送线程入口
+ * @param arg 传入参数（目标 IP 地址字符串）
+ * @return NULL
+ *
+ * 线程流程：
+ * 1. 初始化 TCP 连接
+ * 2. 等待条件变量（有数据发送或 5s 心跳超时）
+ * 3. 连接断开时主动重连
+ * 4. 发送数据帧
+ * 5. 大数据发送完成后通知来源模块
+ */
 void *tcp_send_thread(void *arg)
 {
     char *ip_address = (char *)arg;
@@ -355,6 +428,14 @@ void *tcp_send_thread(void *arg)
     return NULL;
 }
 
+/**
+ * @brief TCP 发送模块的消息处理函数
+ * @param msg 接收到的消息
+ *
+ * 支持的消息类型:
+ * - MSG_TYPE_IMAGE: 将图像数据拷贝到发送缓冲区，通知线程发送
+ * - MSG_TYPE_BIGDATA: 引用大数据消息，零拷贝发送
+ */
 void tcp_send_msg_handler(Common_Msg_t *msg)
 {
     switch (msg->msg_type) {
@@ -415,6 +496,9 @@ void tcp_send_msg_handler(Common_Msg_t *msg)
     }
 }
 
+/**
+ * @brief 唤醒 TCP 发送线程（用于程序退出时）
+ */
 void tcp_send_thread_wakeup(void)
 {
     pthread_mutex_lock(&tcp_data_buffer.link.lock);

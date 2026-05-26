@@ -21,42 +21,48 @@ using namespace cv;
 #define MAXSIZE 50
 #define STORE_IN_DAT 0
 #define FPS 10
-/*存储图像缓冲区*/
+
 static bool move_detected;
+
+/**
+ * @brief 视频存储双缓冲数据结构体
+ */
 typedef struct {
-    // A 块和 B 块分别作为写入和读取的交换空间
-    vector<uint8_t> buffer_A[MAXSIZE];
+    vector<uint8_t> buffer_A[MAXSIZE]; /**< A 块缓冲区 */
     uint32_t lens_A[MAXSIZE];
     uint64_t ts_A[MAXSIZE];
 
-    vector<uint8_t> buffer_B[MAXSIZE];
+    vector<uint8_t> buffer_B[MAXSIZE]; /**< B 块缓冲区 */
     uint32_t lens_B[MAXSIZE];
     uint64_t ts_B[MAXSIZE];
 
-    // 指针切换：指向当前正在“写”的块和“待读”的块
-    vector<uint8_t> (*write_ptr)[MAXSIZE];
+    vector<uint8_t> (*write_ptr)[MAXSIZE]; /**< 当前正在写入的缓冲区指针 */
     uint32_t *write_lens_ptr;
     uint64_t *write_ts_ptr;
 
-    vector<uint8_t> (*read_ptr)[MAXSIZE];
+    vector<uint8_t> (*read_ptr)[MAXSIZE];  /**< 当前待读取的缓冲区指针 */
     uint32_t *read_lens_ptr;
     uint64_t *read_ts_ptr;
     Log_Msg_t log_msg;
-    int write_idx; 
-    bool data_ready; // 标志位：读块是否装满了数据待存
+    int write_idx;          /**< 当前写入位置 */
+    bool data_ready;        /**< 读块是否已装满待处理 */
 
-    pthread_mutex_t lock; // 保护索引切换和标志位
+    pthread_mutex_t lock;
     pthread_cond_t cond;
 } Storage_Data;
-static Storage_Data storage_data ;
-static bool is_recording = false; //视频录制状态
-static uint8_t post_record_count = 0;//延迟录制用
 
-/*视频存储线程*/
+static Storage_Data storage_data;
+static bool is_recording = false;
+static uint8_t post_record_count = 0;
+
 #ifdef __cplusplus
 extern "C" 
 {
 #endif
+
+/**
+ * @brief 初始化存储数据缓冲区
+ */
 static void Storage_Data_Init(void)
 {
     storage_data.write_ptr = &storage_data.buffer_A;
@@ -75,14 +81,19 @@ static void Storage_Data_Init(void)
     pthread_mutex_init(&storage_data.lock, NULL);
     pthread_cond_init(&storage_data.cond, NULL);
 }
+
+/**
+ * @brief 视频存储线程入口
+ * @param arg 传入参数（不使用）
+ * @return NULL
+ *
+ * 根据运动检测结果录制视频：
+ * - 检测到移动时开始录制 .avi 文件
+ * - 移动停止后延迟关闭
+ * - 支持 STORE_IN_DAT 宏切换到 .dat 模式
+ */
 void* storage_video_thread(void* arg)
 {
-    /*存储线程逻辑
-    *第一步：初始化存储缓冲区
-    *第二步：检测当前的危险状态，如果处于危险状态同时视频录制状态为false，开始存储视频，初始化视频头
-    *第三步：检测当前危险状态，如果处于危险状态且视频录制状态为true，将缓冲区里的旧数据全都存到文件中
-    *第四步：检测当前危险状态，如果不处于危险状态且视频录制状态为true，开始延迟存储100帧数据，存储完毕后关闭视频文件，同时置位视频录制状态为false
-    */
     FILE* fp = nullptr;
     Storage_Data_Init();
     while(running){
@@ -94,7 +105,6 @@ void* storage_video_thread(void* arg)
             pthread_mutex_unlock(&storage_data.lock);
             break;
         }
-        //一些操作
         bool should_save = move_detected || (post_record_count > 0);
         storage_data.data_ready = false;
         pthread_mutex_unlock(&storage_data.lock);
@@ -127,7 +137,6 @@ void* storage_video_thread(void* arg)
                 if(post_record_count == 0){
                     ffmpeg_muxer_close();
                     is_recording = false;
-                    //写个日志
                     log_make(&storage_data.log_msg, INFO, gettime_us(), MODULE_ID_STORAGE, "Stored");
                     msg_dispatch(MODULE_ID_STORAGE, MODULE_ID_LOGGER, sizeof(storage_data.log_msg), MSG_TYPE_LOG, &storage_data.log_msg);
                 }
@@ -142,7 +151,6 @@ void* storage_video_thread(void* arg)
                 fp = fopen(filename, "wb");
                 if(fp){
                     is_recording = true;
-                    //写个日志
                     log_make(&storage_data.log_msg, INFO, gettime_us(), MODULE_ID_STORAGE, "Start to store");
                     msg_dispatch(MODULE_ID_STORAGE, MODULE_ID_LOGGER, sizeof(storage_data.log_msg), MSG_TYPE_LOG, &storage_data.log_msg);
                 }
@@ -155,7 +163,6 @@ void* storage_video_thread(void* arg)
                     uint32_t len = storage_data.read_lens_ptr[i];
                     fwrite((*storage_data.read_ptr)[i].data(), 1, len, fp);
                 }
-                //fflush(fp);
             }
             if(!move_detected && post_record_count > 0){
                 post_record_count--;
@@ -165,7 +172,6 @@ void* storage_video_thread(void* arg)
                         fp = nullptr;
                     }
                     is_recording = false;
-                    //写个日志
                     log_make(&storage_data.log_msg, INFO, gettime_us(), MODULE_ID_STORAGE, "Stored");
                     msg_dispatch(MODULE_ID_STORAGE, MODULE_ID_LOGGER, sizeof(storage_data.log_msg), MSG_TYPE_LOG, &storage_data.log_msg);
                 }
@@ -173,30 +179,32 @@ void* storage_video_thread(void* arg)
 #endif
         }
         else{
-            //如果还在录且fp没关，把fp关了
             if(is_recording && fp){
                 fclose(fp);
                 fp = nullptr;
                 is_recording = false;
-                //写个日志
                 log_make(&storage_data.log_msg, INFO, gettime_us(), MODULE_ID_STORAGE, "File closed");
                 msg_dispatch(MODULE_ID_STORAGE, MODULE_ID_LOGGER, sizeof(storage_data.log_msg), MSG_TYPE_LOG, &storage_data.log_msg);
             }
         }
-
-
     }
     if(fp)
         fclose(fp);
     msg_unregister_module(MODULE_ID_STORAGE);
 }
 
-
+/**
+ * @brief 存储模块的消息处理函数
+ * @param msg 接收到的消息
+ *
+ * 支持:
+ * - MSG_TYPE_IMAGE: 缓存图像帧
+ * - MSG_TYPE_ALARM: 更新移动检测标志
+ */
 void storage_msg_handler(Common_Msg_t* msg)
 {
     switch(msg->msg_type){
         case MSG_TYPE_IMAGE:{
-            //处理图像数据消息
             Image_Data* img_data = (Image_Data*)msg->data;
             pthread_mutex_lock(&storage_data.lock);
             int idx = storage_data.write_idx;
@@ -206,16 +214,13 @@ void storage_msg_handler(Common_Msg_t* msg)
             storage_data.write_ts_ptr[idx] = img_data->timestamps;
             storage_data.write_idx++;
             
-            //存数据
             if(storage_data.write_idx >= MAXSIZE){
                 if(storage_data.data_ready){
                     storage_data.write_idx = 0;
-                    //写个日志
                     log_make(&storage_data.log_msg, LOG_ERROR, gettime_us(), MODULE_ID_STORAGE, "Failed");
                     msg_dispatch(MODULE_ID_STORAGE, MODULE_ID_LOGGER, sizeof(storage_data.log_msg), MSG_TYPE_LOG, &storage_data.log_msg);
                 }
                 else{
-                    //交换两个缓冲区指针，并重置writeidx，标记数据已准备好
                     swap(storage_data.write_ptr, storage_data.read_ptr);
                     swap(storage_data.write_lens_ptr, storage_data.read_lens_ptr);
                     swap(storage_data.write_ts_ptr, storage_data.read_ts_ptr);
@@ -223,20 +228,16 @@ void storage_msg_handler(Common_Msg_t* msg)
                     storage_data.write_idx = 0;
                     pthread_cond_signal(&storage_data.cond);
                 }
-                
             }
             pthread_mutex_unlock(&storage_data.lock);
             break;
         }
         case MSG_TYPE_ALARM:{
-            //处理告警数据消息
-            //如果是movedetected就标记movedetect为true  不然标记为false
             Alarm_Data* alarm_data = (Alarm_Data*)msg->data;
             pthread_mutex_lock(&storage_data.lock);
             if(alarm_data->status == MOVED){
                 move_detected = true;
                 post_record_count = 1;
-
             }
             else{
                 move_detected = false;
@@ -245,24 +246,23 @@ void storage_msg_handler(Common_Msg_t* msg)
             break;
         }
         case MSG_TYPE_LOG:
-            //处理日志数据消息
-            break;
         case MSG_TYPE_COMMAND:
-            //处理命令数据消息
-            break;
         case MSG_TYPE_BIGDATA:
-            //处理大数据消息
-            break;
         default:
             break;
     }
 }
+
+/**
+ * @brief 唤醒存储线程（用于程序退出时）
+ */
 void storage_thread_wakeup(void)
 {
     pthread_mutex_lock(&storage_data.lock);
     pthread_cond_signal(&storage_data.cond);
     pthread_mutex_unlock(&storage_data.lock);
 }
+
 #ifdef __cplusplus
 }
 #endif

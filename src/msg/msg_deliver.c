@@ -10,6 +10,9 @@
 #define MAX_MSG_QUEUE_SIZE 32
 #define MAX_LOG_MSG_SIZE 64
 
+/**
+ * @brief 消息队列数据结构体
+ */
 typedef struct {
     Common_Msg_t msg_buffer[MAX_MSG_QUEUE_SIZE];
     Log_Msg_t log_msg_buffer[MAX_LOG_MSG_SIZE];
@@ -23,6 +26,7 @@ static Msg_Queue_t msg_queue;
 static pthread_once_t msg_once = PTHREAD_ONCE_INIT;
 static int msg_initialized = 0;
 
+/* weak 声明：各模块可在自己的 .c 文件中定义同名函数来覆盖 */
 __attribute__((weak)) void V4L2_msg_handler(Common_Msg_t *msg) { (void)msg; }
 __attribute__((weak)) void V4L2_msg_release_handler(Common_Msg_t *msg) { (void)msg; }
 __attribute__((weak)) void udp_msg_handler(Common_Msg_t *msg) { (void)msg; }
@@ -40,6 +44,9 @@ __attribute__((weak)) void tcp_recv_msg_release_handler(Common_Msg_t *msg) { (vo
 __attribute__((weak)) void command_msg_handler(Common_Msg_t *msg) { (void)msg; }
 __attribute__((weak)) void command_msg_release_handler(Common_Msg_t *msg) { (void)msg; }
 
+/**
+ * @brief 一次性初始化消息队列和模块路由（仅执行一次）
+ */
 static void msg_queue_init_once(void)
 {
     memset(&msg_queue, 0, sizeof(msg_queue));
@@ -55,11 +62,19 @@ static void msg_queue_init_once(void)
     msg_register_module(MODULE_ID_COMMAND, command_msg_handler, command_msg_release_handler);
 }
 
+/**
+ * @brief 确保消息队列已初始化
+ */
 static void msg_ensure_init(void)
 {
     pthread_once(&msg_once, msg_queue_init_once);
 }
 
+/**
+ * @brief 将消息复制到队列缓冲区（日志消息会深度拷贝）
+ * @param msg 原始消息
+ * @return 拷贝后的消息
+ */
 static Common_Msg_t msg_prepare_for_queue(const Common_Msg_t *msg)
 {
     Common_Msg_t queued;
@@ -83,6 +98,10 @@ static Common_Msg_t msg_prepare_for_queue(const Common_Msg_t *msg)
     return queued;
 }
 
+/**
+ * @brief 将消息压入队列（优先级模式按优先级排序插入）
+ * @param msg 待入队的消息
+ */
 static void msg_queue_push(const Common_Msg_t *msg)
 {
 #ifdef MSG_ENABLE_PRIORITY
@@ -102,6 +121,11 @@ static void msg_queue_push(const Common_Msg_t *msg)
     ++msg_queue.count;
 }
 
+/**
+ * @brief 从队列头部弹出消息
+ * @param msg 输出：弹出的消息
+ * @return 0=成功, -1=队列为空
+ */
 static int msg_queue_pop(Common_Msg_t *msg)
 {
     uint8_t remaining;
@@ -122,6 +146,10 @@ static int msg_queue_pop(Common_Msg_t *msg)
     return 0;
 }
 
+/**
+ * @brief 释放消息（调用来源模块的 release_handler）
+ * @param msg 待释放的消息
+ */
 static void msg_release(Common_Msg_t *msg)
 {
     if (msg == NULL) {
@@ -130,11 +158,23 @@ static void msg_release(Common_Msg_t *msg)
     msg_module_release_handler(msg);
 }
 
+/**
+ * @brief 初始化消息系统
+ */
 void msg_init(void)
 {
     msg_ensure_init();
 }
 
+/**
+ * @brief 构造一个通用消息
+ * @param src  来源模块 ID
+ * @param dst  目标模块 ID
+ * @param len  数据长度
+ * @param type 消息类型
+ * @param data 数据指针
+ * @return 消息结构体
+ */
 Common_Msg_t msg_make(Module_ID_e src, Module_ID_e dst, uint32_t len, Msg_Type_e type, void *data)
 {
     Common_Msg_t msg;
@@ -153,6 +193,9 @@ Common_Msg_t msg_make(Module_ID_e src, Module_ID_e dst, uint32_t len, Msg_Type_e
 }
 
 #ifdef MSG_ENABLE_PRIORITY
+/**
+ * @brief 构造带优先级的通用消息
+ */
 Common_Msg_t msg_make_with_priority(Module_ID_e src,
                                     Module_ID_e dst,
                                     uint32_t len,
@@ -161,7 +204,6 @@ Common_Msg_t msg_make_with_priority(Module_ID_e src,
                                     void *data)
 {
     Common_Msg_t msg = msg_make(src, dst, len, type, data);
-
     msg.priority = priority;
     return msg;
 }
@@ -174,6 +216,11 @@ void msg_set_priority(Common_Msg_t *msg, Msg_Priority_e priority)
 }
 #endif
 
+/**
+ * @brief 发送消息到消息队列
+ * @param msg 待发送的消息
+ * @return 0=成功, -1=队列满
+ */
 int msg_send(Common_Msg_t *msg)
 {
     Common_Msg_t queued;
@@ -200,6 +247,11 @@ int msg_send(Common_Msg_t *msg)
     return 0;
 }
 
+/**
+ * @brief 从消息队列接收消息（阻塞等待）
+ * @param msg 输出：接收到的消息
+ * @return 0=成功, -1=退出
+ */
 int msg_receive(Common_Msg_t *msg)
 {
     if (msg == NULL) {
@@ -224,17 +276,25 @@ int msg_receive(Common_Msg_t *msg)
     return 0;
 }
 
+/**
+ * @brief 锁定消息队列（用于外部访问）
+ */
 void msg_deliver_lock(void)
 {
-    //msg_ensure_init();
     pthread_mutex_lock(&msg_queue.lock);
 }
 
+/**
+ * @brief 解锁消息队列
+ */
 void msg_deliver_unlock(void)
 {
     pthread_mutex_unlock(&msg_queue.lock);
 }
 
+/**
+ * @brief 清空消息队列
+ */
 void msg_cleanup(void)
 {
     if (!msg_initialized) {
@@ -246,6 +306,13 @@ void msg_cleanup(void)
     pthread_mutex_unlock(&msg_queue.lock);
 }
 
+/**
+ * @brief 消息分发线程入口
+ * @param arg 传入参数（不使用）
+ * @return NULL
+ *
+ * 循环从消息队列取出消息，调用目标模块的处理函数，然后释放
+ */
 void *msg_deliver_thread(void *arg)
 {
     Common_Msg_t msg;
@@ -265,6 +332,9 @@ void *msg_deliver_thread(void *arg)
     return NULL;
 }
 
+/**
+ * @brief 唤醒消息分发线程（用于程序退出时）
+ */
 void msg_thread_wakeup(void)
 {
     msg_ensure_init();

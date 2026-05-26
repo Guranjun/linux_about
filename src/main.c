@@ -17,26 +17,42 @@
 #include "command_get.h"
 volatile int running = 1;
 
-
-// 信号处理函数
+/**
+ * @brief 信号处理函数（SIGINT）
+ * @param sig 信号编号
+ *
+ * 设置 running = 0 并唤醒所有线程，触发各线程退出循环
+ */
 void stop_handler(int sig) {
     printf("\n[Main] Stopping threads...\n");
     running = 0;
-    msg_thread_wakeup(); // 关键：拍醒所有正在 cond_wait 的线程，让它们检查 running 标志并退出
-    udp_thread_wakeup(); // 关键：拍醒所有正在 cond_wait 的线程，让它们检查 running 标志并退出
+    msg_thread_wakeup();
+    udp_thread_wakeup();
     tcp_send_thread_wakeup();
     tcp_recv_thread_wakeup();
     alarm_thread_wakeup();
     storage_thread_wakeup();
     logger_thread_wakeup();
     command_thread_wakeup();
-    // 关键：拍醒所有正在 cond_wait 的线程，让它们检查 running 标志并退出
-   /* pthread_mutex_lock(&camera_udp_shared_buffer.lock);
-    pthread_cond_broadcast(&camera_udp_shared_buffer.cond);
-    pthread_mutex_unlock(&camera_udp_shared_buffer.lock);
-    */
 }
 
+/**
+ * @brief 主函数
+ * @param argc 参数个数
+ * @param argv 参数列表（argv[1]=video设备, argv[2]=目标IP）
+ * @return 0=正常退出, -1=参数错误
+ *
+ * 创建并启动所有工作线程：
+ * - camera_capture: V4L2 摄像头采集
+ * - udp_send:       UDP 图像传输
+ * - tcp_send:       TCP 数据发送
+ * - tcp_recv:       TCP 命令接收
+ * - image_process:  图像处理/运动检测
+ * - msg_deliver:    消息队列分发
+ * - image_storage:  视频存储
+ * - log_process:    日志/数据库
+ * - command_process:命令处理
+ */
 int main(int argc,char **argv)
 {
     if(argc < 3){
@@ -65,10 +81,5 @@ int main(int argc,char **argv)
     pthread_join(t_image_storage, NULL);
     pthread_join(t_log_process, NULL);
     pthread_join(t_command_process, NULL);
-    /*释放资源*/
-    /*free(camera_udp_shared_buffer.camera_data[0]);
-    free(camera_udp_shared_buffer.camera_data[1]);
-    pthread_mutex_destroy(&camera_udp_shared_buffer.lock);
-    pthread_cond_destroy(&camera_udp_shared_buffer.cond);
-    */
+    return 0;
 }

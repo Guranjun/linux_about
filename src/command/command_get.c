@@ -9,16 +9,22 @@
 #include <stdlib.h>
 #include <string.h>
 
+/**
+ * @brief 命令线程私有数据结构体
+ */
 typedef struct {
-    Command_Msg_t cmd_msg;
-    bool cmd_pending;
-    pthread_mutex_t lock;
-    pthread_cond_t cond;
-    Log_Msg_t log_msg;
+    Command_Msg_t cmd_msg;       /**< 从消息队列接收到的命令 */
+    bool cmd_pending;            /**< 是否有待处理的命令 */
+    pthread_mutex_t lock;        /**< 互斥锁 */
+    pthread_cond_t cond;         /**< 条件变量 */
+    Log_Msg_t log_msg;          /**< 日志消息缓冲区 */
 } Command_Data_t;
 
 static Command_Data_t cmd_data;
 
+/**
+ * @brief 初始化命令线程私有数据
+ */
 static void command_data_init(void)
 {
     memset(&cmd_data, 0, sizeof(cmd_data));
@@ -26,6 +32,9 @@ static void command_data_init(void)
     pthread_cond_init(&cmd_data.cond, NULL);
 }
 
+/**
+ * @brief 反初始化命令线程私有数据
+ */
 static void command_data_deinit(void)
 {
     msg_unregister_module(MODULE_ID_COMMAND);
@@ -35,6 +44,7 @@ static void command_data_deinit(void)
 
 /**
  * @brief 命令分发器，根据 cmd 执行对应操作
+ * @param cmd 接收到的命令消息
  */
 static void command_dispatch(Command_Msg_t *cmd)
 {
@@ -61,6 +71,14 @@ static void command_dispatch(Command_Msg_t *cmd)
 
 /* ======================== 消息处理函数 ======================== */
 
+/**
+ * @brief 命令模块的消息处理函数
+ * @param msg 接收到的消息
+ *
+ * 支持的消息类型:
+ * - MSG_TYPE_COMMAND: 保存到内部缓冲区，唤醒处理线程
+ * - MSG_TYPE_BIGDATA: 响应发送完成通知，释放资源
+ */
 void command_msg_handler(Common_Msg_t *msg)
 {
     if (msg == NULL) return;
@@ -100,6 +118,10 @@ void command_msg_handler(Common_Msg_t *msg)
     }
 }
 
+/**
+ * @brief 命令模块的消息释放处理函数
+ * @param msg 待释放的消息
+ */
 void command_msg_release_handler(Common_Msg_t *msg)
 {
     (void)msg;
@@ -107,6 +129,13 @@ void command_msg_release_handler(Common_Msg_t *msg)
 
 /* ======================== 线程入口 ======================== */
 
+/**
+ * @brief 命令处理线程入口
+ * @param arg 传入参数（不使用）
+ * @return NULL
+ *
+ * 线程循环等待命令消息，收到后通过 command_dispatch 分发处理
+ */
 void* command_process_thread(void* arg)
 {
     (void)arg;
@@ -140,6 +169,9 @@ void* command_process_thread(void* arg)
     return NULL;
 }
 
+/**
+ * @brief 唤醒命令处理线程（用于程序退出时）
+ */
 void command_thread_wakeup(void)
 {
     pthread_mutex_lock(&cmd_data.lock);

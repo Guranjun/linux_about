@@ -1,6 +1,8 @@
 #include "crc.h"
 
-// CRC16-CCITT / XMODEM 查找表 (多项式 0x1021)
+/**
+ * CRC16-CCITT / XMODEM 查找表 (多项式 0x1021)
+ */
 static const uint16_t crc16_table[256] = {
     0x0000, 0x1021, 0x2042, 0x3063, 0x4084, 0x50A5, 0x60C6, 0x70E7,
     0x8108, 0x9129, 0xA14A, 0xB16B, 0xC18C, 0xD1AD, 0xE1CE, 0xF1EF,
@@ -36,8 +38,14 @@ static const uint16_t crc16_table[256] = {
     0x6E17, 0x7E36, 0x4E55, 0x5E74, 0x2E93, 0x3EB2, 0x0ED1, 0x1EF0
 };
 
+/**
+ * @brief 计算 CRC16-CCITT (XMODEM) 校验值
+ * @param data   输入数据缓冲区
+ * @param length 数据长度
+ * @return CRC16 校验值（初始值 0x0000，多项式 0x1021）
+ */
 uint16_t crc16_ccitt(const uint8_t *data, size_t length) {
-    uint16_t crc = 0x0000; // 初始值
+    uint16_t crc = 0x0000;
     for (size_t i = 0; i < length; i++) {
         crc = (crc << 8) ^ crc16_table[((crc >> 8) ^ data[i]) & 0xFF];
     }
