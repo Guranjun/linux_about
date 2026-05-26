@@ -21,6 +21,7 @@ cpp/
 build/
 DB/
 trash/
+received_files/
 py_for_pc/venv_yolo/
 bin/
 *.db

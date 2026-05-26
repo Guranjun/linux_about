@@ -2,6 +2,7 @@
 #include "common.h"
 #include "msg_about.h"
 #include "sqlite_about.h"
+#include "cJSON.h"
 //#include "cJSON.h"
 //#include <corecrt_search.h>
 //#include <cstdint>
@@ -17,7 +18,7 @@
 #include <sys/mman.h>   
 #include <unistd.h> 
 
-#define TMP_PATH "/tmp/log_cpy_syslogs.db"
+
 #define MAX_DB_SIZE 16384   //应该设为16384
 
 #define DELETE_LOG_NUM 512
@@ -30,6 +31,7 @@ typedef struct{
     pthread_mutex_t lock;
     pthread_cond_t cond;
     sqlite3* db;
+    Command_Msg_t cmd_msg;
 }LOG_DATA_BUF;
 
 //声明日志队列
@@ -41,7 +43,7 @@ static void log_init(void)
     log_data_buf.Buffer_B.count = 0;
     log_data_buf.input_ptr = &log_data_buf.Buffer_A;
     log_data_buf.process_ptr = &log_data_buf.Buffer_B;
-
+    memset(&log_data_buf.cmd_msg, 0, sizeof(Command_Msg_t));
     pthread_mutex_init( &log_data_buf.lock, NULL);
     pthread_cond_init( &log_data_buf.cond, NULL);
 } 
@@ -66,13 +68,16 @@ void export_logs_on_demand(int cp_fd)
     size_t file_size = st.st_size;
     void* addr = mmap(NULL, file_size, PROT_READ, MAP_SHARED, fd, 0);
     if (addr == MAP_FAILED) {
+        close(fd);
         perror("mmap");
         return ;
     }
     bigdata_msg->data_ptr = addr;
     bigdata_msg->total_len = file_size;
+    bigdata_msg->type = DB;
+    bigdata_msg->status = SEND;
     bigdata_msg->fd = fd;
-    msg_dispatch(MODULE_ID_LOGGER, MODULE_ID_UDP, file_size, MSG_TYPE_BIGDATA, bigdata_msg);
+    msg_dispatch(MODULE_ID_LOGGER, MODULE_ID_TCP_SEND, file_size, MSG_TYPE_BIGDATA, bigdata_msg);
 }
 
 void log_make(Log_Msg_t* log_msg, LOG_LEVEL level, uint64_t timestamp, Module_ID_e module, const char* content)
@@ -96,7 +101,7 @@ void* logger_process_thread(void* arg)
             clock_gettime(CLOCK_REALTIME, &ts);
             ts.tv_sec += 10;
             pthread_cond_timedwait(&log_data_buf.cond, &log_data_buf.lock, &ts);
-            if(log_data_buf.input_ptr->count > 0){
+            if(log_data_buf.input_ptr->count > 0 || log_data_buf.cmd_msg.cmd != 0){
                 break;
             }
         }
@@ -108,9 +113,18 @@ void* logger_process_thread(void* arg)
         Log_Buffer_t* temp = log_data_buf.input_ptr;
         log_data_buf.input_ptr = log_data_buf.process_ptr;
         log_data_buf.process_ptr = temp;
+        
         pthread_mutex_unlock(&log_data_buf.lock);
         db_save_batch(log_data_buf.db, log_data_buf.process_ptr);
-        
+        pthread_mutex_lock(&log_data_buf.lock);
+        if(log_data_buf.cmd_msg.cmd == CMD_LOG_UPLOAD_DB){
+            log_data_buf.cmd_msg.cmd = 0;
+            pthread_mutex_unlock(&log_data_buf.lock);
+            upload_db_to_server(log_data_buf.db);
+        }
+        else{
+            pthread_mutex_unlock(&log_data_buf.lock);
+        }
     }
     pthread_mutex_lock(&log_data_buf.lock);
     db_save_batch(log_data_buf.db, log_data_buf.input_ptr);//防止程序退出时还有没写的日志
@@ -145,19 +159,36 @@ void logger_msg_handler(Common_Msg_t* msg)
                 pthread_mutex_unlock(&log_data_buf.lock);
                 break;
             }
-            case MSG_TYPE_COMMAND:
+            case MSG_TYPE_COMMAND:{
                 //处理命令数据消息
+                Command_Msg_t* cmd_msg = (Command_Msg_t*)msg->data;
+                pthread_mutex_lock(&log_data_buf.lock);
+                log_data_buf.cmd_msg.cmd = cmd_msg->cmd;
+                log_data_buf.cmd_msg.src = cmd_msg->src;
+                log_data_buf.cmd_msg.type = cmd_msg->type;
+                //param json节点，本模块不需要额外的数据，所以不解析
+                log_data_buf.cmd_msg.param = NULL;
+                if (log_data_buf.cmd_msg.cmd >= 0) {
+                    pthread_cond_signal(&log_data_buf.cond);
+                }
+                pthread_mutex_unlock(&log_data_buf.lock);
                 break;
+            }
             case MSG_TYPE_BIGDATA:{
                 BigData_Msg_t* b_msg = (BigData_Msg_t*)msg->data;
-                if(b_msg->data_ptr != MAP_FAILED){
+                if(b_msg->status == DONE){
+                    if(b_msg->data_ptr != MAP_FAILED){
                     munmap(b_msg->data_ptr, b_msg->total_len);
+                    }
+                    if(b_msg->fd >= 0){
+                        close(b_msg->fd);
+                    }
+                    free(b_msg);
+                    msg->data = NULL;
                 }
-                if(b_msg->fd >= 0){
-                    close(b_msg->fd);
+                else if(b_msg->status == RESEND){
+                    msg_dispatch(MODULE_ID_LOGGER, MODULE_ID_TCP_SEND, b_msg->total_len, MSG_TYPE_BIGDATA, b_msg);
                 }
-                free(b_msg);
-                msg->data = NULL;
                 break;
             }
             default:

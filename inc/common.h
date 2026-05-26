@@ -63,6 +63,7 @@ typedef enum {
     CMD_STORAGE_ = 0x0200,
 
     CMD_LOG_ = 0x0300,
+    CMD_LOG_UPLOAD_DB = 0x0301,
 
     CMD_UDP = 0x0400,
 

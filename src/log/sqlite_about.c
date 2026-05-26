@@ -1,6 +1,10 @@
 #include "sqlite_about.h"
 #include "log.h"
+#include <fcntl.h>
+#include <unistd.h>
 #define DB_PATH "/mnt/flash/syslogs.db"
+#define TMP_PATH "/tmp/log_cpy_syslogs.db"
+
 sqlite3* DB_Init(void)
 {
     sqlite3* db = NULL;
@@ -94,4 +98,54 @@ void db_save_batch(sqlite3* db, Log_Buffer_t* buffer)
         printf("Commit Failed: %s\n", sqlite3_errmsg(db));   
     }
     buffer->count = 0;
+}
+
+void upload_db_to_server(sqlite3* src_db)
+{
+    sqlite3* dest_db = NULL;
+    unlink(TMP_PATH);
+    /* 打开目标数据库（tmp路径），如果不存在则创建 */
+    if(sqlite3_open(TMP_PATH, &dest_db) != SQLITE_OK){
+        fprintf(stderr, "Can't open tmp db: %s\n", sqlite3_errmsg(dest_db));
+        if (dest_db){
+            sqlite3_close(dest_db);
+        }
+        
+        return;
+    }
+
+    /* 使用SQLite在线备份API，安全地从src_db拷贝到dest_db */
+    sqlite3_backup* backup = sqlite3_backup_init(dest_db, "main", src_db, "main");
+    if(backup == NULL){
+        fprintf(stderr, "Backup init failed: %s\n", sqlite3_errmsg(dest_db));
+        sqlite3_close(dest_db);
+        return;
+    }
+
+    int rc;
+    do {
+        rc = sqlite3_backup_step(backup, 64); /* 每次拷贝64页 */
+        if (rc == SQLITE_BUSY || rc == SQLITE_LOCKED) {
+            usleep(1000 * 10); // 10ms
+            rc = SQLITE_OK;    // 强行修正状态让其继续循环
+        }
+    } while(rc == SQLITE_OK);
+
+    sqlite3_backup_finish(backup);
+    sqlite3_close(dest_db);
+
+    if(rc != SQLITE_DONE){
+        fprintf(stderr, "Database backup failed\n");
+        unlink(TMP_PATH);
+        return;
+    }
+
+    /* 打开备份文件，通过export_logs_on_demand上传 */
+    int fd = open(TMP_PATH, O_RDONLY);
+    if(fd < 0){
+        perror("open tmp db");
+        return;
+    }
+
+    export_logs_on_demand(fd);
 }

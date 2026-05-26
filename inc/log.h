@@ -8,4 +8,5 @@ typedef struct{
 }Log_Buffer_t;
 void* logger_process_thread(void* arg);
 void logger_thread_wakeup(void);
+void export_logs_on_demand(int cp_fd);
 #endif // __LOG_H

@@ -60,7 +60,7 @@ void tcp_recv_msg_handler(Common_Msg_t* msg)
 
 void tcp_recv_msg_release_handler(Common_Msg_t* msg)
 {
-    switch(msg->type){
+    switch(msg->msg_type){
         case MSG_TYPE_ALARM:{
             break;
         }
@@ -277,7 +277,7 @@ static void cmd_deliver(Frame_Header* hdr, uint8_t* data)
         cJSON *param_node = cJSON_GetObjectItemCaseSensitive(tcp_recv_buffer.json_root, "param");
         if (cJSON_IsNumber(module_node) && cJSON_IsNumber(command_node) && cJSON_IsNumber(ver_node)
             && cJSON_IsNumber(type_node)) {
-            if (ver_node->valueint == 1) {
+            if (ver_node->valueint == 0) {
                 int module_id = module_node->valueint;
                 int cmd_id = command_node->valueint;
                 int type = type_node->valueint;
