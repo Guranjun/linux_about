@@ -11,6 +11,7 @@
 #include "my_time.h"
 #include "crc.h"
 #include "cJSON.h"
+#include "json_about.h"
 #include <stdint.h>
 #include <stdbool.h>
 
@@ -261,6 +262,8 @@ static int tcp_search_frame_header(int sock, Frame_Header* out_hdr)
  */
 static void cmd_deliver(Frame_Header* hdr, uint8_t* data)
 {
+    int ver;
+
     if (data == NULL || hdr->data_len == 0) {
         return;
     }
@@ -268,57 +271,81 @@ static void cmd_deliver(Frame_Header* hdr, uint8_t* data)
     data[hdr->data_len] = '\0';
     tcp_recv_buffer.json_root = cJSON_Parse((const char*)data);
     printf("json parse %s\n", tcp_recv_buffer.json_root ? "OK" : "FAIL");
-    if (!tcp_recv_buffer.json_root) printf("error: %s\n", cJSON_GetErrorPtr());
-    if (tcp_recv_buffer.json_root != NULL) {
-        cJSON *ver_node = cJSON_GetObjectItemCaseSensitive(tcp_recv_buffer.json_root, "ver");
-        cJSON *module_node = cJSON_GetObjectItemCaseSensitive(tcp_recv_buffer.json_root, "mod");
-        cJSON *command_node = cJSON_GetObjectItemCaseSensitive(tcp_recv_buffer.json_root, "cmd");
-        cJSON *type_node = cJSON_GetObjectItemCaseSensitive(tcp_recv_buffer.json_root, "type");
-        cJSON *param_node = cJSON_GetObjectItemCaseSensitive(tcp_recv_buffer.json_root, "param");
-        if (cJSON_IsNumber(module_node) && cJSON_IsNumber(command_node) && cJSON_IsNumber(ver_node)
-            && cJSON_IsNumber(type_node)) {
-            if (ver_node->valueint == 0) {
-                int module_id = module_node->valueint;
-                int cmd_id = command_node->valueint;
-                int type = type_node->valueint;
+    if (!tcp_recv_buffer.json_root) {
+        printf("error: %s\n", cJSON_GetErrorPtr());
+        return;
+    }
 
-                switch (type) {
-                    case 0: {
-                        /* 控制类指令 — 通过 msg_dispatch 发给目标模块 */
-                        tcp_recv_buffer.cmd_msg.cmd = (CMD_ID)cmd_id;
-                        tcp_recv_buffer.cmd_msg.src = MODULE_ID_TCP_RECV;
-                        tcp_recv_buffer.cmd_msg.type = type;
-                        tcp_recv_buffer.cmd_msg.param = param_node;
-                        if(module_id < MODULE_ID_MAX && module_id >= 0){
-                              msg_dispatch(MODULE_ID_TCP_RECV,
-                                     (Module_ID_e)module_id,
-                                     sizeof(tcp_recv_buffer.cmd_msg),
-                                     MSG_TYPE_COMMAND,
-                                     &tcp_recv_buffer.cmd_msg);
-                        }
-                      
-                        break;
-                    }
-                    case 1:
-                    case 2:
-                    default:{
-                        cJSON_Delete(tcp_recv_buffer.json_root);
-                        tcp_recv_buffer.json_root = NULL;
-                        break;
-                    }
-                }
-                /* 标记指令已发出，等待被处理 */
-                tcp_recv_mark_cmd_sent();
-            }
-        } else {
-            log_make(&tcp_recv_buffer.log_msg, WARN, gettime_us(),
-                     MODULE_ID_TCP_RECV, "JSON keys missing or type mismatch");
-            msg_dispatch(MODULE_ID_TCP_RECV, MODULE_ID_LOGGER, sizeof(tcp_recv_buffer.log_msg), MSG_TYPE_LOG, &tcp_recv_buffer.log_msg);
+    /* 校验 ver */
+    ver = json_get_int_def(tcp_recv_buffer.json_root, "ver", -1);
+    if (ver != 0) {
+        log_make(&tcp_recv_buffer.log_msg, WARN, gettime_us(),
+                 MODULE_ID_TCP_RECV, "bad ver in cmd json");
+        msg_dispatch(MODULE_ID_TCP_RECV, MODULE_ID_LOGGER,
+                     sizeof(tcp_recv_buffer.log_msg), MSG_TYPE_LOG, &tcp_recv_buffer.log_msg);
+        cJSON_Delete(tcp_recv_buffer.json_root);
+        tcp_recv_buffer.json_root = NULL;
+        return;
+    }
+
+    /* 用 json_about.h API 填充 cmd_msg */
+    if (json_parse_command(tcp_recv_buffer.json_root, &tcp_recv_buffer.cmd_msg) != 0) {
+        cJSON_Delete(tcp_recv_buffer.json_root);
+        tcp_recv_buffer.json_root = NULL;
+        log_make(&tcp_recv_buffer.log_msg, WARN, gettime_us(),
+                 MODULE_ID_TCP_RECV, "parse cmd json failed");
+        msg_dispatch(MODULE_ID_TCP_RECV, MODULE_ID_LOGGER,
+                     sizeof(tcp_recv_buffer.log_msg), MSG_TYPE_LOG, &tcp_recv_buffer.log_msg);
+        return;
+    }
+
+    int module_id = json_get_int_def(tcp_recv_buffer.json_root, "mod", -1);
+    int type = tcp_recv_buffer.cmd_msg.type;
+
+    if (module_id < 0 || module_id >= MODULE_ID_MAX) {
+        log_make(&tcp_recv_buffer.log_msg, WARN, gettime_us(),
+                 MODULE_ID_TCP_RECV, "bad mod in cmd json");
+        msg_dispatch(MODULE_ID_TCP_RECV, MODULE_ID_LOGGER,
+                     sizeof(tcp_recv_buffer.log_msg), MSG_TYPE_LOG, &tcp_recv_buffer.log_msg);
+        cJSON_Delete(tcp_recv_buffer.json_root);
+        tcp_recv_buffer.json_root = NULL;
+        return;
+    }
+
+    switch (type) {
+        case 0: {
+            /* 控制类指令 — 发给目标模块 */
+            msg_dispatch(MODULE_ID_TCP_RECV,
+                         (Module_ID_e)module_id,
+                         sizeof(tcp_recv_buffer.cmd_msg),
+                         MSG_TYPE_COMMAND,
+                         &tcp_recv_buffer.cmd_msg);
+            break;
+        }
+        case 1: {
+            /* 查询类指令 — 发给目标模块 */
+            msg_dispatch(MODULE_ID_TCP_RECV,
+                         (Module_ID_e)module_id,
+                         sizeof(tcp_recv_buffer.cmd_msg),
+                         MSG_TYPE_COMMAND,
+                         &tcp_recv_buffer.cmd_msg);
+            break;
+        }
+        case 2: {
+            /* 上传类指令 — 预留，暂做丢弃 */
             cJSON_Delete(tcp_recv_buffer.json_root);
             tcp_recv_buffer.json_root = NULL;
+            break;
         }
-        
+        default: {
+            cJSON_Delete(tcp_recv_buffer.json_root);
+            tcp_recv_buffer.json_root = NULL;
+            break;
+        }
     }
+
+    /* 标记指令已发出，等待被处理 */
+    tcp_recv_mark_cmd_sent();
 }
 
 void* tcp_recv_thread(void* arg)

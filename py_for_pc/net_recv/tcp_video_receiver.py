@@ -18,6 +18,7 @@ FILE_TYPE_IMAGE   = 1
 FILE_TYPE_DB      = 2
 FILE_TYPE_VIDEO   = 3
 FILE_TYPE_COMMAND = 4
+FILE_TYPE_JSON    = 5
 
 # < H H I H H I Q I H H ➔ 32 字节
 HEADER_FMT = "< H H I H H I Q I H H"
@@ -30,12 +31,15 @@ file_type_names = {
     FILE_TYPE_DB:      "DB",
     FILE_TYPE_VIDEO:   "VIDEO",
     FILE_TYPE_COMMAND: "COMMAND",
+    FILE_TYPE_JSON:    "JSON",
 }
 
 file_type_extensions = {
     FILE_TYPE_IMAGE:   ".jpg",
     FILE_TYPE_DB:      ".db",
     FILE_TYPE_VIDEO:   ".avi",
+    FILE_TYPE_COMMAND: ".json",
+    FILE_TYPE_JSON:    ".json",
 }
 
 
@@ -246,6 +250,35 @@ def handle_client(client_sock, client_addr):
                     # ---- 视频类型：保存为 .avi ----
                     print(f"🎬 收到视频文件 (Frame: {f_id}, {len(full_data)} 字节)")
                     save_file(full_data, FILE_TYPE_VIDEO, ts)
+
+                elif file_type == FILE_TYPE_JSON:
+                    # ---- JSON 类型：解析并显示内容 ----
+                    try:
+                        import json
+                        resp = json.loads(full_data.decode('utf-8'))
+                        resp_type = resp.get("type")
+                        status = resp.get("status")
+                        print(f"📋 收到 JSON 响应 (type={resp_type}, status={status})")
+
+                        if status == "ok" and "files" in resp:
+                            file_list = resp["files"]
+                            count = resp.get("count", len(file_list))
+                            print(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+                            print(f"  📂 当前设备上的 .avi 文件列表 ({count} 个):")
+                            print(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+                            for idx, fname in enumerate(file_list, 1):
+                                print(f"  {idx:3d}. {fname}")
+                            print(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+                        elif status == "error":
+                            err_code = resp.get("err_code", "?")
+                            err_msg = resp.get("err_msg", "未知错误")
+                            print(f"  ⚠️  错误 [{err_code}]: {err_msg}")
+
+                        # 同时也保存为 .json 文件
+                        save_file(full_data, FILE_TYPE_JSON, ts)
+                    except Exception as e:
+                        print(f"⚠️ JSON 解析失败: {e}")
+                        save_file(full_data, FILE_TYPE_JSON, ts)
 
                 else:
                     # ---- 未知类型：以 .bin 保存 ----

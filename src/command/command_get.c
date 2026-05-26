@@ -1,1 +1,245 @@
 #include "common.h"
+#include "command_get.h"
+#include "json_about.h"
+#include "msg_about.h"
+#include "my_time.h"
+
+#include <glob.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#define MAX_AVI_FILES 256
+
+typedef struct {
+    Command_Msg_t cmd_msg;
+    bool cmd_pending;
+    pthread_mutex_t lock;
+    pthread_cond_t cond;
+    Log_Msg_t log_msg;
+} Command_Data_t;
+
+static Command_Data_t cmd_data;
+
+static void command_data_init(void)
+{
+    memset(&cmd_data, 0, sizeof(cmd_data));
+    pthread_mutex_init(&cmd_data.lock, NULL);
+    pthread_cond_init(&cmd_data.cond, NULL);
+}
+
+static void command_data_deinit(void)
+{
+    msg_unregister_module(MODULE_ID_COMMAND);
+    pthread_mutex_destroy(&cmd_data.lock);
+    pthread_cond_destroy(&cmd_data.cond);
+}
+
+/**
+ * @brief 扫描指定目录下的所有 .avi 文件
+ * @param path      扫描路径，如 "/mnt/sdcard"
+ * @param out_files 输出：文件名数组（不含路径），需调用 free_file_list 释放
+ * @param out_count 输出：文件数量
+ * @return 0=成功, -1=失败
+ */
+static int scan_avi_files(const char *path, const char ***out_files, int *out_count)
+{
+    char pattern[256];
+    glob_t gbuf;
+    int ret;
+    const char **files = NULL;
+    int count = 0;
+
+    if (path == NULL || out_files == NULL || out_count == NULL) return -1;
+
+    snprintf(pattern, sizeof(pattern), "%s/*.avi", path);
+
+    ret = glob(pattern, GLOB_NOSORT, NULL, &gbuf);
+    if (ret != 0) {
+        /* 没有匹配文件或目录不存在，返回空列表 */
+        *out_files = NULL;
+        *out_count = 0;
+        return 0;
+    }
+
+    count = (int)gbuf.gl_pathc;
+    if (count > MAX_AVI_FILES) {
+        count = MAX_AVI_FILES;
+    }
+
+    files = (const char **)malloc((size_t)count * sizeof(char *));
+    if (files == NULL) {
+        globfree(&gbuf);
+        return -1;
+    }
+
+    for (int i = 0; i < count; i++) {
+        const char *fullpath = gbuf.gl_pathv[i];
+        const char *basename = strrchr(fullpath, '/');
+        if (basename != NULL) {
+            basename++;
+        } else {
+            basename = fullpath;
+        }
+        files[i] = strdup(basename);
+        if (files[i] == NULL) {
+            /* 个别 strdup 失败不影响整体 */
+        }
+    }
+
+    globfree(&gbuf);
+
+    *out_files = files;
+    *out_count = count;
+    return 0;
+}
+
+static void free_file_list(const char **files, int count)
+{
+    if (files == NULL) return;
+    for (int i = 0; i < count; i++) {
+        if (files[i] != NULL) {
+            free((void *)files[i]);
+        }
+    }
+    free(files);
+}
+
+/**
+ * @brief 处理查询文件列表命令 (CMD_STORAGE_QUERY_FILES)
+ */
+static void handle_query_files(void)
+{
+    const char **files = NULL;
+    int count = 0;
+    cJSON *root;
+
+    if (scan_avi_files("/mnt/sdcard", &files, &count) != 0) {
+        log_make(&cmd_data.log_msg, LOG_ERROR, gettime_us(),
+                 MODULE_ID_COMMAND, "scan avi failed");
+        msg_dispatch(MODULE_ID_COMMAND, MODULE_ID_LOGGER,
+                     sizeof(cmd_data.log_msg), MSG_TYPE_LOG, &cmd_data.log_msg);
+        root = json_create_error(1, -1, "scan failed");
+    } else {
+        root = json_create_filelist(files, count);
+        free_file_list(files, count);
+    }
+
+    if (root != NULL) {
+        json_send_response(MODULE_ID_COMMAND, root);
+    }
+}
+
+/**
+ * @brief 命令分发器，根据 cmd 执行对应操作
+ */
+static void command_dispatch(Command_Msg_t *cmd)
+{
+    if (cmd == NULL) return;
+
+    switch (cmd->cmd) {
+        case CMD_STORAGE_QUERY_FILES: {
+            handle_query_files();
+            break;
+        }
+
+        /* ---- 预留：后续其他查询/控制命令在此新增 case ---- */
+        /* case CMD_SOMETHING: { ...  break; } */
+
+        default: {
+            log_make(&cmd_data.log_msg, WARN, gettime_us(),
+                     MODULE_ID_COMMAND, "Unknown cmd");
+            msg_dispatch(MODULE_ID_COMMAND, MODULE_ID_LOGGER,
+                         sizeof(cmd_data.log_msg), MSG_TYPE_LOG, &cmd_data.log_msg);
+            break;
+        }
+    }
+}
+
+/* ======================== 消息处理函数 ======================== */
+
+void command_msg_handler(Common_Msg_t *msg)
+{
+    if (msg == NULL) return;
+
+    switch (msg->msg_type) {
+        case MSG_TYPE_COMMAND: {
+            Command_Msg_t *cmd = (Command_Msg_t *)msg->data;
+
+            pthread_mutex_lock(&cmd_data.lock);
+            /* 保存到内部缓冲区，等待线程处理 */
+            memcpy(&cmd_data.cmd_msg, cmd, sizeof(Command_Msg_t));
+            cmd_data.cmd_msg.param = NULL; /* 不引用外部 param，避免野指针 */
+            cmd_data.cmd_pending = true;
+            pthread_cond_signal(&cmd_data.cond);
+            pthread_mutex_unlock(&cmd_data.lock);
+            break;
+        }
+        case MSG_TYPE_BIGDATA: {
+            /* BigData 发送完成后的回调清理 */
+            BigData_Msg_t *b_msg = (BigData_Msg_t *)msg->data;
+            if (b_msg == NULL) break;
+
+            if (b_msg->status == DONE || b_msg->status == FILE_DELIVER_ERROR) {
+                if (b_msg->data_ptr != NULL) {
+                    free(b_msg->data_ptr);  /* cJSON_PrintUnformatted 的 malloc */
+                }
+                free(b_msg);
+                msg->data = NULL;
+            } else if (b_msg->status == RESEND) {
+                msg_dispatch(MODULE_ID_COMMAND, MODULE_ID_TCP_SEND,
+                             b_msg->total_len, MSG_TYPE_BIGDATA, b_msg);
+            }
+            break;
+        }
+        default:
+            break;
+    }
+}
+
+void command_msg_release_handler(Common_Msg_t *msg)
+{
+    (void)msg;
+}
+
+/* ======================== 线程入口 ======================== */
+
+void* command_process_thread(void* arg)
+{
+    (void)arg;
+
+    command_data_init();
+    msg_register_module(MODULE_ID_COMMAND, command_msg_handler, command_msg_release_handler);
+
+    log_make(&cmd_data.log_msg, INFO, gettime_us(),
+             MODULE_ID_COMMAND, "Command module started");
+    msg_dispatch(MODULE_ID_COMMAND, MODULE_ID_LOGGER,
+                 sizeof(cmd_data.log_msg), MSG_TYPE_LOG, &cmd_data.log_msg);
+
+    while (running) {
+        pthread_mutex_lock(&cmd_data.lock);
+        while (!cmd_data.cmd_pending && running) {
+            pthread_cond_wait(&cmd_data.cond, &cmd_data.lock);
+        }
+        if (!running) {
+            pthread_mutex_unlock(&cmd_data.lock);
+            break;
+        }
+        Command_Msg_t local_cmd;
+        memcpy(&local_cmd, &cmd_data.cmd_msg, sizeof(Command_Msg_t));
+        cmd_data.cmd_pending = false;
+        pthread_mutex_unlock(&cmd_data.lock);
+
+        command_dispatch(&local_cmd);
+    }
+
+    command_data_deinit();
+    return NULL;
+}
+
+void command_thread_wakeup(void)
+{
+    pthread_mutex_lock(&cmd_data.lock);
+    pthread_cond_signal(&cmd_data.cond);
+    pthread_mutex_unlock(&cmd_data.lock);
+}

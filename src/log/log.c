@@ -176,7 +176,7 @@ void logger_msg_handler(Common_Msg_t* msg)
             }
             case MSG_TYPE_BIGDATA:{
                 BigData_Msg_t* b_msg = (BigData_Msg_t*)msg->data;
-                if(b_msg->status == DONE){
+                if(b_msg->status == DONE || b_msg->status == FILE_DELIVER_ERROR){
                     if(b_msg->data_ptr != MAP_FAILED){
                     munmap(b_msg->data_ptr, b_msg->total_len);
                     }

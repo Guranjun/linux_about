@@ -40,7 +40,8 @@ typedef enum {
     IMAGE,
     DB,
     VIDEO,
-    COMMAND
+    COMMAND,
+    JSON
 } FILE_TYPE;
 //消息类型的定义
 typedef enum {
@@ -61,6 +62,7 @@ typedef enum {
     CMD_V4L2_ = 0x0100,
 
     CMD_STORAGE_ = 0x0200,
+    CMD_STORAGE_QUERY_FILES = 0x0201,
 
     CMD_LOG_ = 0x0300,
     CMD_LOG_UPLOAD_DB = 0x0301,
