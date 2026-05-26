@@ -265,7 +265,16 @@ void *tcp_send_thread(void *arg)
 
         pthread_mutex_lock(&tcp_data_buffer.link.lock);
         while ((!tcp_data_buffer.is_sending) && running) {
-            pthread_cond_wait(&tcp_data_buffer.link.cond, &tcp_data_buffer.link.lock);
+            /* 每 5 秒超时唤醒一次，用于空闲时重连检测 */
+            struct timespec ts;
+            clock_gettime(CLOCK_REALTIME, &ts);
+            ts.tv_sec += 5;
+            int ret = pthread_cond_timedwait(&tcp_data_buffer.link.cond,
+                                              &tcp_data_buffer.link.lock, &ts);
+            if (ret == ETIMEDOUT && !tcp_data_buffer.link.connected && running) {
+                /* 超时且连接已断开，退出 while 执行重连逻辑 */
+                break;
+            }
         }
         if (!running) {
             pthread_mutex_unlock(&tcp_data_buffer.link.lock);
@@ -289,14 +298,25 @@ void *tcp_send_thread(void *arg)
         bool send_success = false;
 
         if (!is_conn) {
+            /* 连接断开时尝试重连（无论是否有数据要发） */
             if (Tcp_Open_And_Connect(&tcp_data_buffer) == 0) {
                 pthread_mutex_lock(&tcp_data_buffer.link.lock);
                 tcp_data_buffer.link.connected = true;
                 pthread_cond_broadcast(&tcp_data_buffer.link.cond);
                 pthread_mutex_unlock(&tcp_data_buffer.link.lock);
-                is_conn = true; // 标记本次可以尝试发送
+                is_conn = true;
+                printf("TCP reconnected successfully\n");
+            } else if (running) {
+                /* 重连失败，回 cond_wait 继续等待 */
+                continue;
             }
         }
+
+        /* 如果是心跳超时唤醒但没有实际数据，不发送，回 cond_wait */
+        if (!tcp_data_buffer.is_sending && running) {
+            continue;
+        }
+
         if (is_conn) {
             if (Tcp_Send_Frame(&tcp_data_buffer, data_to_send, frame_len, current_file_type) == 0) {
                 send_success = true;
