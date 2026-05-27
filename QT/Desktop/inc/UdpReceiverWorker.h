@@ -21,7 +21,7 @@ private slots:
 
     void onReadyRead();
 signals:
-    void dataReceived(const QByteArray &data);
+    void image_dataReceived(const QByteArray &data);
     void errorReceived(const QString &errorMsg);
 private:
     QUdpSocket *my_udpsocket = nullptr;

@@ -70,6 +70,7 @@ void UdpReceiverWorker::onReadyRead()
             uint32_t frame_id = hdr->frame_id;
             uint16_t pkg_cnt = hdr->pkg_cnt;
             uint16_t pkg_id = hdr->pkg_id;
+            uint32_t file_type = hdr->type;
             QByteArray data = raw_data.mid(sizeof(struct Frame_Header), data_len);
             if(m_lastCompleteFrameId > 0 && frame_id <m_lastCompleteFrameId){
                 continue;
@@ -81,7 +82,25 @@ void UdpReceiverWorker::onReadyRead()
                 for(uint16_t i = 0; i < pkg_cnt; i++){
                     completeFrameData.append(m_frameBuffer[frame_id][i]);
                 }
-                emit dataReceived(completeFrameData);
+                switch(file_type){
+                    case 0:{
+                        break;
+                    }
+                    case 1:{
+                        emit image_dataReceived(completeFrameData);
+                        break;
+                    }
+                    case 2:{
+                        break;
+                    }
+                    case 3:{
+                        break;
+                    }
+                    default:{
+                        break;
+                    }
+                }
+
                 m_frameBuffer.remove(frame_id);
                 m_lastCompleteFrameId = frame_id;
             }
@@ -94,9 +113,9 @@ void UdpReceiverWorker::cleanExpiredFrames(uint32_t currentFrameId)
     if(m_frameBuffer.size() > 3){
         QList<uint32_t>frameIds = m_frameBuffer.keys();
         for(uint32_t id : frameIds){
-            if(id < currentFrameId - 5){
+            if(id < currentFrameId - 3){
                 m_frameBuffer.remove(id);
-                qDebug() << "图像帧积攒过多延迟明显，丢弃一帧";
+                qDebug() << "图像帧积攒过多延迟明显，丢弃缓冲区里的帧";
             }
         }
     }
