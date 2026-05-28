@@ -1,60 +1,39 @@
 #include "UdpReceiverWorker.h"
 #include <QThread>
 #include <QDebug>
+#include <net_shared.h>
 
-#if defined(_MSC_VER)
-#pragma pack(push, 1)
-#endif
-struct Frame_Header{
-    uint16_t magic;		//帧头标志
-    uint16_t data_len;	//数据长度
-    uint32_t frame_id;	//帧ID
-    uint16_t pkg_cnt;	//分包总数
-    uint16_t pkg_id;	//分包ID
-    uint32_t type;     //数据类型
-    uint64_t timestamp;	//时间戳
-    uint32_t reserved1; //4字节的保留位
-    uint16_t reserved2; //2字节的保留位
-    uint16_t crc;       //CRC检测码
-}
-#if defined(__GNUC__) || defined(__clang__)
-__attribute__((packed))
-#endif
-;
-#if defined(_MSC_VER)
-#pragma pack(pop)
-#endif
 UdpReceiverWorker::UdpReceiverWorker(QObject *parent)
     : QObject(parent)
 {
 }
 void UdpReceiverWorker::initSocket()
 {
-    my_udpsocket = new QUdpSocket(this);
-    bool ok = my_udpsocket->bind(MY_PORT, QUdpSocket::ShareAddress | QUdpSocket::ReuseAddressHint);
+    m_udpsocket = new QUdpSocket(this);
+    bool ok = m_udpsocket->bind(M_PORT, QUdpSocket::ShareAddress | QUdpSocket::ReuseAddressHint);
     if(ok){
-        qDebug() << "UDP init success the port is " << MY_PORT;
+        qDebug() << "UDP init success the port is " << M_PORT;
     }
     else{
-        qDebug() << "UDP init failed " << my_udpsocket->errorString();
+        qDebug() << "UDP init failed " << m_udpsocket->errorString();
     }
-    connect(my_udpsocket, &QUdpSocket::readyRead,
+    connect(m_udpsocket, &QUdpSocket::readyRead,
             this, &UdpReceiverWorker::onReadyRead);
 }
 void UdpReceiverWorker::closeSocket()
 {
-    if(my_udpsocket == nullptr){
+    if(m_udpsocket == nullptr){
         return;
     }
-    my_udpsocket->disconnect();
-    my_udpsocket->close();
-    my_udpsocket->deleteLater();
-    my_udpsocket = nullptr;
+    m_udpsocket->disconnect();
+    m_udpsocket->close();
+    m_udpsocket->deleteLater();
+    m_udpsocket = nullptr;
 }
 void UdpReceiverWorker::onReadyRead()
 {
-    while(my_udpsocket->hasPendingDatagrams()){
-        QNetworkDatagram datagram = my_udpsocket->receiveDatagram();
+    while(m_udpsocket->hasPendingDatagrams()){
+        QNetworkDatagram datagram = m_udpsocket->receiveDatagram();
         QByteArray raw_data = datagram.data();
         if(raw_data.isEmpty() || raw_data.size() < sizeof(struct Frame_Header)){
             continue;
@@ -82,30 +61,15 @@ void UdpReceiverWorker::onReadyRead()
                 for(uint16_t i = 0; i < pkg_cnt; i++){
                     completeFrameData.append(m_frameBuffer[frame_id][i]);
                 }
-                switch(file_type){
-                    case 0:{
-                        break;
-                    }
-                    case 1:{
-                        emit image_dataReceived(completeFrameData);
-                        break;
-                    }
-                    case 2:{
-                        break;
-                    }
-                    case 3:{
-                        break;
-                    }
-                    default:{
-                        break;
-                    }
-                }
+                dispatchBusiness(file_type, completeFrameData);
 
                 m_frameBuffer.remove(frame_id);
                 m_lastCompleteFrameId = frame_id;
             }
         }
-
+        else{
+            continue;
+        }
     }
 }
 void UdpReceiverWorker::cleanExpiredFrames(uint32_t currentFrameId)
@@ -118,5 +82,27 @@ void UdpReceiverWorker::cleanExpiredFrames(uint32_t currentFrameId)
                 qDebug() << "图像帧积攒过多延迟明显，丢弃缓冲区里的帧";
             }
         }
+    }
+}
+
+void UdpReceiverWorker::dispatchBusiness(uint32_t type, const QByteArray &data)
+{
+    switch(type){
+    case 0:{
+        break;
+    }
+    case 1:{
+        emit image_dataReceived(data);
+        break;
+    }
+    case 2:{
+        break;
+    }
+    case 3:{
+        break;
+    }
+    default:{
+        break;
+    }
     }
 }

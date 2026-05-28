@@ -6,7 +6,7 @@
 #include <QMap>
 #include <QByteArray>
 #include <QList>
-#define MY_PORT 8080
+#define M_PORT 8080
 class UdpReceiverWorker : public QObject
 {
     Q_OBJECT
@@ -24,11 +24,12 @@ signals:
     void image_dataReceived(const QByteArray &data);
     void errorReceived(const QString &errorMsg);
 private:
-    QUdpSocket *my_udpsocket = nullptr;
-    const quint16 my_port = MY_PORT;
+    QUdpSocket *m_udpsocket = nullptr;
+    const quint16 my_port = M_PORT;
     typedef QMap<uint16_t, QByteArray> FramePackets;
     QMap<uint32_t, FramePackets> m_frameBuffer;
     uint32_t m_lastCompleteFrameId = 0;
     void cleanExpiredFrames(uint32_t currentFrameId);
+    void dispatchBusiness(uint32_t type, const QByteArray &data);
 };
 #endif // UDPRECEIVERWORKER_H
